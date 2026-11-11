@@ -1,0 +1,19 @@
+[package]
+name = "rusted-ui"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+gpui.workspace = true
+image.workspace = true
+rusted-archives.workspace = true
+rusted-core.workspace = true
+rusted-db.workspace = true
+rusted-fs.workspace = true
+rusted-operations.workspace = true
+rusted-preview.workspace = true
+rusted-search.workspace = true
+rusted-storage.workspace = true
+open.workspace = true

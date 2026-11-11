@@ -1,0 +1,62 @@
+[workspace]
+members = [
+    "crates/rusted-core",
+    "crates/rusted-fs",
+    "crates/rusted-operations",
+    "crates/rusted-search",
+    "crates/rusted-db",
+    "crates/rusted-preview",
+    "crates/rusted-archives",
+    "crates/rusted-storage",
+    "crates/rusted-ui",
+    "crates/rusted-app",
+]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.90"
+license = "MIT"
+repository = "https://github.com/rust-pickles/rusted-file-manager"
+
+[workspace.dependencies]
+anyhow = "=1.0.100"
+chrono = { version = "=0.4.42", default-features = false, features = ["clock", "serde", "std"] }
+crossbeam-channel = "=0.5.15"
+directories = "=6.0.0"
+flate2 = "=1.1.5"
+gpui = { git = "https://github.com/zed-industries/zed", rev = "f22590dc2418906e82d116f6ccc50de1093b4172" }
+image = { version = "=0.25.8", default-features = false, features = ["png", "jpeg", "gif", "bmp", "ico"] }
+lru = "=0.16.2"
+notify = "=8.2.0"
+open = "=5.3.2"
+regex = "=1.12.2"
+rusqlite = { version = "=0.37.0", features = ["bundled"] }
+rusted-archives = { path = "crates/rusted-archives" }
+rusted-core = { path = "crates/rusted-core" }
+rusted-db = { path = "crates/rusted-db" }
+rusted-fs = { path = "crates/rusted-fs" }
+rusted-operations = { path = "crates/rusted-operations" }
+rusted-preview = { path = "crates/rusted-preview" }
+rusted-storage = { path = "crates/rusted-storage" }
+rusted-search = { path = "crates/rusted-search" }
+rusted-ui = { path = "crates/rusted-ui" }
+serde = { version = "=1.0.228", features = ["derive"] }
+serde_json = "=1.0.145"
+tar = "=0.4.44"
+tempfile = "=3.23.0"
+thiserror = "=2.0.17"
+trash = "=5.2.3"
+uuid = { version = "=1.18.1", features = ["v4", "serde"] }
+zip = { version = "=5.1.1", default-features = false, features = ["deflate"] }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true
+panic = "abort"
+opt-level = 3
+
+[profile.bench]
+debug = 1

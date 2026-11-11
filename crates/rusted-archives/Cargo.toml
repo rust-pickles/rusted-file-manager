@@ -1,0 +1,17 @@
+[package]
+name = "rusted-archives"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+flate2.workspace = true
+rusted-core.workspace = true
+rusted-fs.workspace = true
+tar.workspace = true
+thiserror.workspace = true
+zip.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
