@@ -263,10 +263,6 @@ mod tests {
     use super::*;
     use std::path::Path;
 
-    fn tab(name: &str) -> Tab {
-        Tab::new(PathBuf::from(name), ViewMode::Details)
-    }
-
     #[test]
     fn five_zone_drop_builds_nested_layout_and_preserves_tabs() {
         let mut workspace = Workspace::new("a".into(), ViewMode::Details);

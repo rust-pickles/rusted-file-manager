@@ -405,7 +405,9 @@ mod tests {
         keymap.bind(Action::Refresh, Shortcut::parse("ctrl+t"));
         assert_eq!(keymap.resolve(&Shortcut::parse("ctrl+t").unwrap()), Some(Action::Refresh));
         assert_eq!(keymap.shortcut(Action::NewTab), None);
-        keymap.reset(Action::Refresh);
+        // reset() is a `-> &mut Self` builder method, so the call must not be
+        // discarded as a bare statement.
+        let _ = keymap.reset(Action::Refresh);
         assert_eq!(keymap.shortcut(Action::Refresh).unwrap().display(), "F5");
     }
 
