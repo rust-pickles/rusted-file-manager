@@ -12,14 +12,18 @@ permissions:
 env:
   CARGO_TERM_COLOR: never
   CARGO_INCREMENTAL: "0"
+  CARGO_NET_RETRY: "4"
 
 jobs:
-  check:
-    # Windows is the shipping target: this job is the real platform verification.
+  windows:
+    # Windows 11 x64 is the shipping target; this is the real platform check.
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: rusted-windows
       - name: Show toolchain
         run: |
           rustup show
@@ -27,31 +31,43 @@ jobs:
       - name: Check workspace
         shell: pwsh
         run: |
-          $log = "check.log"
-          cargo check --workspace --all-targets 2>&1 | Tee-Object -FilePath $log
-          "check_exit=$LASTEXITCODE" | Tee-Object -FilePath $log -Append
-      - name: Test workspace
-        shell: pwsh
-        run: |
-          $log = "test.log"
-          cargo test --workspace 2>&1 | Tee-Object -FilePath $log
-          "test_exit=$LASTEXITCODE" | Tee-Object -FilePath $log -Append
-      - name: Publish diagnostics to issue
+          cargo check --workspace --all-targets 2>&1 | Tee-Object -FilePath check.log
+          "check_exit=$LASTEXITCODE" | Tee-Object -FilePath check.log -Append
+          exit 0
+      - name: Publish check diagnostics
         if: always()
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          $body = "Run ${{ github.run_id }} on commit ${{ github.sha }}`n`n"
-          foreach ($file in @("check.log", "test.log")) {
-            if (Test-Path $file) {
-              $text = Get-Content $file -Raw
-              if ($text.Length -gt 55000) { $text = $text.Substring($text.Length - 55000) }
-              $body += "### $file`n``````n$text`n```````n"
-            }
+          $body = "Run ${{ github.run_id }} on ${{ github.sha }} (check)`n`n"
+          if (Test-Path check.log) {
+            $text = Get-Content check.log -Raw
+            if ($text.Length -gt 60000) { $text = $text.Substring($text.Length - 60000) }
+            $body += "``````n$text`n``````n"
           }
-          Set-Content -Path comment.md -Value $body -Encoding utf8
-          gh issue comment 1 --repo ${{ github.repository }} --body-file comment.md
+          Set-Content -Path check-comment.md -Value $body -Encoding utf8
+          gh issue comment 1 --repo ${{ github.repository }} --body-file check-comment.md
+      - name: Test workspace
+        shell: pwsh
+        run: |
+          cargo test --workspace 2>&1 | Tee-Object -FilePath test.log
+          "test_exit=$LASTEXITCODE" | Tee-Object -FilePath test.log -Append
+          exit 0
+      - name: Publish test diagnostics
+        if: always()
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $body = "Run ${{ github.run_id }} on ${{ github.sha }} (test)`n`n"
+          if (Test-Path test.log) {
+            $text = Get-Content test.log -Raw
+            if ($text.Length -gt 60000) { $text = $text.Substring($text.Length - 60000) }
+            $body += "``````n$text`n``````n"
+          }
+          Set-Content -Path test-comment.md -Value $body -Encoding utf8
+          gh issue comment 1 --repo ${{ github.repository }} --body-file test-comment.md
       - name: Upload logs
         if: always()
         uses: actions/upload-artifact@v4
