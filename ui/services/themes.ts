@@ -1,0 +1,88 @@
+import { ThemeDefinition } from '../types/filesystem';
+
+export const THEMES: ThemeDefinition[] = [
+  {
+    id: 'obsidian',
+    name: 'Obsidian Black',
+    description: 'Deep charcoal and near-black surfaces with neutral silver accents. Default desktop theme.',
+    isDark: true,
+    previewColors: {
+      bg: '#101010',
+      sidebar: '#141414',
+      surface: '#191919',
+      border: '#2A2A2A',
+      accent: '#E5E5E5',
+      text: '#F2F2F2',
+    },
+  },
+  {
+    id: 'midnight',
+    name: 'Midnight',
+    description: 'Very dark graphite surfaces with cool, subtle steel-blue accents.',
+    isDark: true,
+    previewColors: {
+      bg: '#0D1117',
+      sidebar: '#111620',
+      surface: '#161C26',
+      border: '#232B3B',
+      accent: '#60A5FA',
+      text: '#E6EDF3',
+    },
+  },
+  {
+    id: 'graphite',
+    name: 'Graphite',
+    description: 'Medium-dark charcoal surfaces with refined neutral grey highlights.',
+    isDark: true,
+    previewColors: {
+      bg: '#1C1C20',
+      sidebar: '#222226',
+      surface: '#28282E',
+      border: '#383842',
+      accent: '#D4D4D8',
+      text: '#F4F4F5',
+    },
+  },
+  {
+    id: 'pure-black',
+    name: 'Pure Black',
+    description: 'Near-absolute black surfaces for extreme contrast and OLED energy efficiency.',
+    isDark: true,
+    previewColors: {
+      bg: '#000000',
+      sidebar: '#070707',
+      surface: '#0E0E0E',
+      border: '#222222',
+      accent: '#FFFFFF',
+      text: '#FFFFFF',
+    },
+  },
+  {
+    id: 'snow',
+    name: 'Snow',
+    description: 'Clean minimalist light theme with soft grey panels and crisp high-contrast typography.',
+    isDark: false,
+    previewColors: {
+      bg: '#F8F9FA',
+      sidebar: '#F1F3F5',
+      surface: '#FFFFFF',
+      border: '#E2E5E9',
+      accent: '#18181B',
+      text: '#18181B',
+    },
+  },
+  {
+    id: 'warm-sand',
+    name: 'Warm Sand',
+    description: 'Warm cream backgrounds, muted beige surfaces, and dark espresso typography.',
+    isDark: false,
+    previewColors: {
+      bg: '#F5F2EB',
+      sidebar: '#EFECE4',
+      surface: '#FAF8F5',
+      border: '#DFD8CC',
+      accent: '#785A44',
+      text: '#2C2825',
+    },
+  },
+];

@@ -1,0 +1,200 @@
+@import "tailwindcss";
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* Theme CSS Custom Properties */
+:root,
+[data-theme="obsidian"] {
+  --bg-app: #101010;
+  --bg-sidebar: #141414;
+  --bg-main: #101010;
+  --bg-surface: #191919;
+  --bg-surface-elevated: #1D1D1D;
+  --bg-surface-secondary: #161616;
+  --bg-hover: #242424;
+  --bg-active: #282828;
+  --border-subtle: #2A2A2A;
+  --border-strong: #363636;
+  --text-primary: #F2F2F2;
+  --text-secondary: #A0A0A0;
+  --text-muted: #707070;
+  --accent: #E5E5E5;
+  --accent-hover: #FFFFFF;
+  --accent-text: #101010;
+  --selection-bg: rgba(255, 255, 255, 0.08);
+  --selection-border: rgba(255, 255, 255, 0.22);
+  --scrollbar-thumb: rgba(255, 255, 255, 0.12);
+  --scrollbar-thumb-hover: rgba(255, 255, 255, 0.24);
+}
+
+[data-theme="midnight"] {
+  --bg-app: #0D1117;
+  --bg-sidebar: #111620;
+  --bg-main: #0D1117;
+  --bg-surface: #161C26;
+  --bg-surface-elevated: #1C2330;
+  --bg-surface-secondary: #131822;
+  --bg-hover: #222B3B;
+  --bg-active: #273347;
+  --border-subtle: #232B3B;
+  --border-strong: #303B52;
+  --text-primary: #E6EDF3;
+  --text-secondary: #8B949E;
+  --text-muted: #5A6270;
+  --accent: #60A5FA;
+  --accent-hover: #93C5FD;
+  --accent-text: #0D1117;
+  --selection-bg: rgba(96, 165, 250, 0.12);
+  --selection-border: rgba(96, 165, 250, 0.35);
+  --scrollbar-thumb: rgba(255, 255, 255, 0.12);
+  --scrollbar-thumb-hover: rgba(255, 255, 255, 0.24);
+}
+
+[data-theme="graphite"] {
+  --bg-app: #1C1C20;
+  --bg-sidebar: #222226;
+  --bg-main: #1C1C20;
+  --bg-surface: #28282E;
+  --bg-surface-elevated: #303038;
+  --bg-surface-secondary: #24242A;
+  --bg-hover: #383842;
+  --bg-active: #40404C;
+  --border-subtle: #383842;
+  --border-strong: #484854;
+  --text-primary: #F4F4F5;
+  --text-secondary: #A1A1AA;
+  --text-muted: #71717A;
+  --accent: #D4D4D8;
+  --accent-hover: #FFFFFF;
+  --accent-text: #1C1C20;
+  --selection-bg: rgba(255, 255, 255, 0.09);
+  --selection-border: rgba(255, 255, 255, 0.25);
+  --scrollbar-thumb: rgba(255, 255, 255, 0.14);
+  --scrollbar-thumb-hover: rgba(255, 255, 255, 0.28);
+}
+
+[data-theme="pure-black"] {
+  --bg-app: #000000;
+  --bg-sidebar: #070707;
+  --bg-main: #000000;
+  --bg-surface: #0E0E0E;
+  --bg-surface-elevated: #151515;
+  --bg-surface-secondary: #0A0A0A;
+  --bg-hover: #1C1C1C;
+  --bg-active: #242424;
+  --border-subtle: #222222;
+  --border-strong: #333333;
+  --text-primary: #FFFFFF;
+  --text-secondary: #9E9E9E;
+  --text-muted: #666666;
+  --accent: #FFFFFF;
+  --accent-hover: #E0E0E0;
+  --accent-text: #000000;
+  --selection-bg: rgba(255, 255, 255, 0.12);
+  --selection-border: rgba(255, 255, 255, 0.35);
+  --scrollbar-thumb: rgba(255, 255, 255, 0.16);
+  --scrollbar-thumb-hover: rgba(255, 255, 255, 0.32);
+}
+
+[data-theme="snow"] {
+  --bg-app: #F8F9FA;
+  --bg-sidebar: #F1F3F5;
+  --bg-main: #F8F9FA;
+  --bg-surface: #FFFFFF;
+  --bg-surface-elevated: #FFFFFF;
+  --bg-surface-secondary: #F4F6F8;
+  --bg-hover: #E9ECEF;
+  --bg-active: #DEE2E6;
+  --border-subtle: #E2E5E9;
+  --border-strong: #CED4DA;
+  --text-primary: #18181B;
+  --text-secondary: #52525B;
+  --text-muted: #8E95A0;
+  --accent: #18181B;
+  --accent-hover: #27272A;
+  --accent-text: #FFFFFF;
+  --selection-bg: rgba(24, 24, 27, 0.07);
+  --selection-border: rgba(24, 24, 27, 0.22);
+  --scrollbar-thumb: rgba(0, 0, 0, 0.15);
+  --scrollbar-thumb-hover: rgba(0, 0, 0, 0.3);
+}
+
+[data-theme="warm-sand"] {
+  --bg-app: #F5F2EB;
+  --bg-sidebar: #EFECE4;
+  --bg-main: #F5F2EB;
+  --bg-surface: #FAF8F5;
+  --bg-surface-elevated: #FFFFFF;
+  --bg-surface-secondary: #EBE7DE;
+  --bg-hover: #E5E0D5;
+  --bg-active: #DCD6C9;
+  --border-subtle: #DFD8CC;
+  --border-strong: #CDC4B5;
+  --text-primary: #2C2825;
+  --text-secondary: #655E57;
+  --text-muted: #968D84;
+  --accent: #785A44;
+  --accent-hover: #5E4433;
+  --accent-text: #FFFFFF;
+  --selection-bg: rgba(120, 90, 68, 0.1);
+  --selection-border: rgba(120, 90, 68, 0.3);
+  --scrollbar-thumb: rgba(94, 68, 51, 0.18);
+  --scrollbar-thumb-hover: rgba(94, 68, 51, 0.35);
+}
+
+@layer base {
+  :root {
+    --font-sans: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  }
+
+  body {
+    font-family: var(--font-sans);
+    background-color: var(--bg-app);
+    color: var(--text-primary);
+    user-select: none;
+    -webkit-user-select: none;
+    overscroll-behavior: none;
+    transition: background-color 0.15s ease, color 0.15s ease;
+  }
+}
+
+/* Custom sleek desktop scrollbar using theme variables */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+  border-radius: 9999px;
+  transition: background-color 0.15s ease;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--scrollbar-thumb-hover);
+}
+
+/* Standardized design system classes */
+.rounded-control {
+  border-radius: 8px;
+}
+
+.rounded-btn {
+  border-radius: 10px;
+}
+
+.rounded-tab {
+  border-radius: 11px;
+}
+
+.rounded-panel {
+  border-radius: 14px;
+}
+
+.rounded-dialog {
+  border-radius: 18px;
+}
