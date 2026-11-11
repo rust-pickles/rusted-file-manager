@@ -13,6 +13,8 @@ pub enum DbError {
     Sql(#[from] rusqlite::Error),
     #[error("state encoding error: {0}")]
     Json(#[from] serde_json::Error),
+    #[error("local storage could not be prepared: {0}")]
+    Io(#[from] std::io::Error),
     #[error("no local application data directory is available")]
     NoDataDirectory,
 }
