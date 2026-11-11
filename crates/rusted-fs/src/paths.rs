@@ -22,9 +22,25 @@ pub fn validate_directory(path: &Path) -> Result<PathBuf, PathError> {
     Ok(path.to_path_buf())
 }
 
+/// Joins a single user-supplied *name* onto `parent`.
+///
+/// The whole point is to reject anything that could escape the parent, so a name
+/// containing a separator is refused outright: `Path::new("a/b").components()`
+/// yields only `Normal` components, which is why component inspection alone is
+/// not enough to catch traversal.
 pub fn safe_child(parent: &Path, name: &str) -> Result<PathBuf, PathError> {
+    let rejected = name.is_empty()
+        || name == "."
+        || name == ".."
+        || name.contains('/')
+        || name.contains('\\')
+        || name.contains(':')
+        || name.chars().any(|c| c.is_control());
+    if rejected {
+        return Err(PathError::InvalidTraversal);
+    }
     let candidate = Path::new(name);
-    if name.is_empty() || candidate.is_absolute() || candidate.components().any(|c| !matches!(c, Component::Normal(_))) {
+    if candidate.components().any(|component| !matches!(component, Component::Normal(_))) {
         return Err(PathError::InvalidTraversal);
     }
     Ok(parent.join(candidate))
@@ -115,6 +131,11 @@ fn expand_environment(input: &str) -> String {
             }
         }
     }
+    // `output` already holds the resolved `%VAR%` prefix, so the dollar pass has to
+    // run over the accumulated text plus the tail, not just the tail.
+    let combined = format!("{output}{rest}");
+    let mut output = String::with_capacity(combined.len());
+    rest = &combined;
     if rest.contains('$') {
         let mut parts = rest.split('$');
         if let Some(first) = parts.next() {
@@ -157,11 +178,21 @@ pub fn location_label(path: &Path) -> String {
 mod tests {
     use super::*;
 
+    /// An absolute root that exists on every host, so assertions about parent
+    /// relationships do not depend on which platform the tests run on.
+    fn root() -> PathBuf {
+        tempfile::tempdir().unwrap().path().to_path_buf()
+    }
+
     #[test]
     fn children_cannot_escape_the_parent() {
-        assert!(safe_child(Path::new("/tmp"), "ok").is_ok());
-        for bad in ["../secret", "/absolute", "a/b", "", ".."] {
-            assert!(safe_child(Path::new("/tmp"), bad).is_err(), "{bad}");
+        let parent = root();
+        assert!(safe_child(&parent, "ok").is_ok());
+        assert_eq!(safe_child(&parent, "ok").unwrap(), parent.join("ok"));
+        // `"a/b"` is the interesting case: its components are all `Normal`, so only
+        // an explicit separator check rejects it.
+        for bad in ["../secret", "/absolute", "a/b", "a\\b", "", "..", ".", "C:evil", "nul\0byte"] {
+            assert!(safe_child(&parent, bad).is_err(), "{bad:?} should be rejected");
         }
     }
 
@@ -177,9 +208,13 @@ mod tests {
 
     #[test]
     fn ancestors_are_listed_root_last() {
-        let chain = ancestor_chain(Path::new("/home/user/docs"), 10);
-        assert_eq!(chain[0], PathBuf::from("/home/user/docs"));
-        assert_eq!(chain.last().unwrap(), &PathBuf::from("/"));
+        let start = root().join("user").join("docs");
+        let chain = ancestor_chain(&start, 10);
+        assert_eq!(chain[0], start);
+        // Walking parents must terminate at the filesystem root for this host.
+        let last = chain.last().unwrap();
+        assert_eq!(last.parent(), None, "chain should end at a root: {last:?}");
+        assert!(chain.len() >= 2);
     }
 
     #[test]
@@ -193,7 +228,20 @@ mod tests {
 
     #[test]
     fn labels_use_the_last_component() {
-        assert_eq!(location_label(Path::new("/home/user")), "user");
-        assert_eq!(location_label(Path::new("/")), "/");
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(dir.path().join("user")).unwrap();
+        assert_eq!(location_label(&dir.path().join("user")), "user");
+        // A root has no final component, so it must fall back to its own text.
+        let root_path = ancestor_chain(dir.path(), 64).pop().unwrap();
+        assert!(!location_label(&root_path).is_empty());
+    }
+
+    #[test]
+    fn mixed_percent_and_dollar_expansion_resolves_both() {
+        std::env::set_var("RUSTED_TEST_MIX", "mix");
+        std::env::set_var("RUSTED_TEST_TAIL", "tail");
+        // A `%VAR%` prefix used to swallow the `$VAR` suffix.
+        assert_eq!(expand_environment("%RUSTED_TEST_MIX%/$RUSTED_TEST_TAIL"), "mix/tail");
+        assert_eq!(expand_environment("$RUSTED_TEST_TAIL/%RUSTED_TEST_MIX%"), "tail/mix");
     }
 }

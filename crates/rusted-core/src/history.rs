@@ -111,10 +111,16 @@ mod tests {
 
     #[test]
     fn breadcrumbs_reconstruct_paths() {
-        let history = NavigationHistory::new(PathBuf::from("/home/user/docs"));
+        // `Path::components` differs per platform (Windows yields a Prefix *and* a
+        // RootDir), so assert the invariant that matters: one crumb per component,
+        // ending at the original path with the final component as its label.
+        let target = std::env::temp_dir().join("user").join("docs");
+        let history = NavigationHistory::new(target.clone());
         let crumbs = history.breadcrumbs();
-        assert_eq!(crumbs.len(), 4);
+        let expected = target.components().count();
+        assert_eq!(crumbs.len(), expected);
         assert_eq!(crumbs.last().unwrap().0, "docs");
-        assert_eq!(crumbs.last().unwrap().1, PathBuf::from("/home/user/docs"));
+        assert_eq!(crumbs.last().unwrap().1, target);
+        assert!(crumbs.iter().all(|(label, _)| !label.is_empty()));
     }
 }

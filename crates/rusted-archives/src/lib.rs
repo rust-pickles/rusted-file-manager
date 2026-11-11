@@ -10,7 +10,7 @@ pub use tar_archive::TarArchive;
 pub use zip_archive::ZipArchive;
 
 use rusted_core::format_bytes;
-use std::io::{self, Read};
+use std::io;
 use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use thiserror::Error;

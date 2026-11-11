@@ -128,9 +128,14 @@ mod tests {
 
     #[test]
     fn title_falls_back_to_drive_or_root() {
-        let tab = Tab::new(PathBuf::from("C:\\"), ViewMode::Details);
-        assert_eq!(tab.title(), "C:\\");
-        let tab = Tab::new(PathBuf::from("/home/user"), ViewMode::Details);
+        // A root has no file name, so the title falls back to the full path text;
+        // a normal directory uses its final component.
+        let root_path = std::env::temp_dir().ancestors().last().unwrap().to_path_buf();
+        let tab = Tab::new(root_path.clone(), ViewMode::Details);
+        assert_eq!(tab.title(), root_path.display().to_string());
+
+        let nested = std::env::temp_dir().join("user");
+        let tab = Tab::new(nested, ViewMode::Details);
         assert_eq!(tab.title(), "user");
     }
 }

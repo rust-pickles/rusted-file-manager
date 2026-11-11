@@ -92,7 +92,7 @@ pub fn classify(entry: &FileEntry) -> PreviewKind {
     let extension = entry.extension.as_deref().unwrap_or_default();
     match extension {
         "png" | "jpg" | "jpeg" | "gif" | "bmp" | "ico" | "webp" | "tif" | "tiff" => PreviewKind::Image,
-        "txt" | "md" | "markdown" | "rs" | "toml" | "json" | "yaml" | "yml" | "toml" | "ini" | "cfg"
+        "txt" | "md" | "markdown" | "rs" | "toml" | "json" | "yaml" | "yml" | "ini" | "cfg"
         | "conf" | "log" | "csv" | "tsv" | "xml" | "html" | "htm" | "css" | "js" | "ts" | "tsx" | "jsx"
         | "c" | "h" | "cpp" | "hpp" | "cs" | "java" | "kt" | "py" | "rb" | "go" | "lua" | "php" | "sh"
         | "ps1" | "bat" | "cmd" | "sql" | "gitignore" | "editorconfig" | "lock" => PreviewKind::Text,

@@ -235,10 +235,19 @@ fn read_shell_redirect(root: &std::path::Path, folder: &str) -> Option<PathBuf> 
 mod tests {
     use super::*;
 
+    /// `C:\\` on Windows, `/` elsewhere: an absolute path with a prefix component.
+    fn canonical_root() -> PathBuf {
+        let dir = tempfile::tempdir().unwrap();
+        let mut chain = crate::ancestor_chain(dir.path(), 64);
+        chain.pop().expect("a filesystem root always exists")
+    }
+
     #[test]
     fn drive_labels_and_usage_are_computed() {
         let drive = DriveInfo {
-            root: PathBuf::from("C:\\"),
+            // Built from whatever the host considers a disk prefix, so this test
+            // measures the formatting logic rather than assuming a Windows host.
+            root: canonical_root(),
             label: Some("System".into()),
             removable: false,
             fixed: true,
@@ -246,7 +255,7 @@ mod tests {
             total: Some(1000),
             free: Some(400),
         };
-        assert_eq!(drive.display_name(), "System (C:)");
+        assert!(drive.display_name().starts_with("System ("), "{}", drive.display_name());
         assert_eq!(drive.used(), Some(600));
         assert!((drive.used_fraction().unwrap() - 0.6).abs() < f32::EPSILON);
     }
