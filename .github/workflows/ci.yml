@@ -228,12 +228,21 @@ jobs:
         run: |
           cargo build -p rusted-shell 2>&1 | Tee-Object -FilePath shell-build.log
           $code = $LASTEXITCODE
-          if ($code -eq 0) {
-            $exe = Get-Item "target/debug/rusted-shell.exe"
-            "exe bytes: $($exe.Length)"
+          if ($code -ne 0) { exit $code }
+          # "Built without error" is not the same as "produced a desktop binary".
+          # Assert the executable exists and is a plausible size, so a link that
+          # silently produced nothing cannot pass.
+          $exe = Get-Item "target/debug/rusted-shell.exe" -ErrorAction SilentlyContinue
+          if (-not $exe) {
+            Write-Error "cargo build succeeded but target/debug/rusted-shell.exe does not exist"
+            exit 1
           }
-          "shellbuild_exit=$code" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-          exit $code
+          "exe bytes: $($exe.Length)"
+          "exe_bytes=$($exe.Length)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          if ($exe.Length -lt 1MB) {
+            Write-Error "rusted-shell.exe is only $($exe.Length) bytes; expected a linked Windows binary"
+            exit 1
+          }
 
       - name: Summarise shell results
         if: always()
@@ -249,7 +258,7 @@ jobs:
             "| vite build | ${{ steps.frontend.outcome }} |",
             "| cargo check | ${{ steps.shellcheck.outcome }} |",
             "| shell tests | ${{ steps.shelltest.outcome }} |",
-            "| cargo build (exe) | ${{ steps.shellbuild.outcome }} |"
+            "| cargo build (exe) | ${{ steps.shellbuild.outcome }} (${{ steps.shellbuild.outputs.exe_bytes }} bytes) |"
           )
           $lines | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
 

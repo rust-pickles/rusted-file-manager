@@ -302,7 +302,7 @@ mod tests {
             name: name.to_string(),
             kind,
             size: 2048,
-            modified: Utc_timestamp(),
+            modified: fixed_timestamp(),
             created: None,
             readonly: false,
             hidden: false,
@@ -310,7 +310,7 @@ mod tests {
         }
     }
 
-    fn Utc_timestamp() -> Option<chrono::DateTime<chrono::Utc>> {
+    fn fixed_timestamp() -> Option<chrono::DateTime<chrono::Utc>> {
         chrono::Utc.with_ymd_and_hms(2024, 5, 6, 7, 8, 9).single()
     }
 
