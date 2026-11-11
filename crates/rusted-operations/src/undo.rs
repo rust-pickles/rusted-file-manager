@@ -16,9 +16,15 @@ pub enum JournalEntry {
 }
 
 fn same_volume(a: &PathBuf, b: &PathBuf) -> bool {
-    let root = |path: &PathBuf| {
-        path.components().next().map(|component| component.as_os_str().to_os_string())
-    };
+    // The first component is a drive prefix on Windows ("C:") and RootDir
+    // elsewhere. RootDir has an empty OsStr, so compare the rendered component
+    // rather than the raw OsString: two Windows paths that happen to start at a
+    // root ("\\server\share" vs "C:") must not be treated as the same volume.
+    fn root(path: &PathBuf) -> Option<String> {
+        path.components()
+            .next()
+            .map(|component| format!("{:?}", component))
+    }
     root(a) == root(b)
 }
 
@@ -141,17 +147,30 @@ impl UndoStack {
     }
 
     pub fn undo(&mut self) -> Result<String, OperationError> {
-        let dated = self.undo.pop().ok_or_else(|| OperationError::NotReversible("nothing to undo".into()))?;
+        // Peek before acting: a replay that fails leaves the journal untouched, so
+        // the entry is neither lost nor duplicated. A folder that is temporarily
+        // non-empty can therefore be undone later without reloading the app.
+        let dated = self
+            .undo
+            .last()
+            .cloned()
+            .ok_or_else(|| OperationError::NotReversible("nothing to undo".into()))?;
         dated.entry.undo()?;
         let label = dated.entry.label();
+        self.undo.pop();
         self.redo.push(dated);
         Ok(label)
     }
 
     pub fn redo(&mut self) -> Result<String, OperationError> {
-        let dated = self.redo.pop().ok_or_else(|| OperationError::NotReversible("nothing to redo".into()))?;
+        let dated = self
+            .redo
+            .last()
+            .cloned()
+            .ok_or_else(|| OperationError::NotReversible("nothing to redo".into()))?;
         dated.entry.redo()?;
         let label = dated.entry.label();
+        self.redo.pop();
         self.undo.push(dated);
         Ok(label)
     }
@@ -216,7 +235,10 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let mut stack = UndoStack::new(2);
         for index in 0..5 {
-            stack.record(JournalEntry::CreateFile { path: dir.path().join(format!("f{index}")) });
+            // The file must actually exist for the entry to be replayable.
+            let path = dir.path().join(format!("f{index}"));
+            fs::write(&path, b"x").unwrap();
+            stack.record(JournalEntry::CreateFile { path });
         }
         assert_eq!(stack.undo.len(), 2);
         stack.undo().unwrap();
@@ -224,5 +246,16 @@ mod tests {
         stack.record(JournalEntry::CreateFile { path: dir.path().join("new") });
         assert!(!stack.can_redo());
         assert!(stack.undo_label().unwrap().contains("Create file"));
+    }
+
+    #[test]
+    fn undoing_something_already_gone_fails_without_consuming_the_entry() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut stack = UndoStack::new(4);
+        stack.record(JournalEntry::CreateFile { path: dir.path().join("never-created") });
+        assert!(stack.undo().is_err());
+        // The entry stays on the stack so the UI can keep offering it.
+        assert!(stack.can_undo());
+        assert!(!stack.can_redo());
     }
 }

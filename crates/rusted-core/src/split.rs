@@ -196,14 +196,23 @@ impl SplitNode {
     }
 
     /// Sets the ratio of the innermost split that separates `first` and `second`.
+    /// Returns false unless some divider between the two panes was found.
     pub fn resize(&mut self, first: PaneId, second: PaneId, ratio: f32) -> bool {
         match self {
             Self::Leaf(_) => false,
             Self::Split { ratio: current, first: a, second: b, .. } => {
-                let in_a = a.pane(first).is_some() && a.pane(second).is_some();
-                let in_b = b.pane(first).is_some() && b.pane(second).is_some();
-                if in_a || in_b {
-                    *current = ratio.clamp(MIN_PANE_RATIO, 1.0 - MIN_PANE_RATIO);
+                // The divider belongs to this split only when the panes sit on
+                // opposite sides of it. Checking each side separately was wrong:
+                // a split where *both* panes live inside `a` was treated as the
+                // separator, so the outer ratio was clamped and the inner divider
+                // never moved.
+                let (first_left, second_left) = (a.pane(first).is_some(), b.pane(first).is_some());
+                let (first_right, second_right) = (a.pane(second).is_some(), b.pane(second).is_some());
+                let straddles = (first_left && second_right) || (second_left && first_right);
+                if straddles {
+                    let clamped = ratio.clamp(MIN_PANE_RATIO, 1.0 - MIN_PANE_RATIO);
+                    // `ratio` always describes the share taken by the left/top side.
+                    *current = if first_left { clamped } else { 1.0 - clamped };
                     true
                 } else {
                     a.resize(first, second, ratio) || b.resize(first, second, ratio)
@@ -227,10 +236,14 @@ impl SplitNode {
             return Err(SplitError::LastPane);
         }
         let taken = std::mem::replace(self, Self::Leaf(Pane::empty()));
-        let (mut tree, removed) = remove_leaf(taken, id);
+        let (tree, removed) = remove_leaf(taken, id);
         let Some(mut pane) = removed else {
-            *self = tree;
+            *self = tree.unwrap_or_else(|| Self::Leaf(Pane::empty()));
             return Err(SplitError::PaneNotFound(id));
+        };
+        let Some(mut tree) = tree else {
+            *self = Self::Leaf(Pane::empty());
+            return Err(SplitError::LastPane);
         };
         let tabs = std::mem::take(&mut pane.tabs);
         // Prefer a sibling, otherwise the first surviving pane in layout order.
@@ -326,25 +339,34 @@ fn prune_node(node: SplitNode) -> Option<SplitNode> {
     }
 }
 
-fn remove_leaf(node: SplitNode, id: PaneId) -> (SplitNode, Option<Pane>) {
+/// Removes a leaf. Returns `(None, Some(pane))` when the tree becomes empty and
+/// `(Some(subtree), Some(pane))` when a split collapses into its remaining child,
+/// which is what keeps `close_pane_merge` from leaving a placeholder pane behind.
+fn remove_leaf(node: SplitNode, id: PaneId) -> (Option<SplitNode>, Option<Pane>) {
     match node {
         SplitNode::Leaf(pane) => {
             if pane.id == id {
-                (SplitNode::Leaf(Pane::empty()), Some(pane))
+                (None, Some(pane))
             } else {
-                (SplitNode::Leaf(pane), None)
+                (Some(SplitNode::Leaf(pane)), None)
             }
         }
         SplitNode::Split { axis, ratio, first, second } => {
-            let (first, removed) = remove_leaf(*first, id);
+            let (first_tree, removed) = remove_leaf(*first, id);
             if removed.is_some() {
-                return (SplitNode::Split { axis, ratio, first: Box::new(first), second }, removed);
+                return match first_tree {
+                    Some(first) => (Some(SplitNode::Split { axis, ratio, first: Box::new(first), second }), removed),
+                    None => (Some(*second), removed),
+                };
             }
-            let (second, removed) = remove_leaf(*second, id);
-            let tree = SplitNode::Split { axis, ratio, first: Box::new(first), second: Box::new(second) };
-            match removed {
-                Some(pane) => (tree, Some(pane)),
-                None => (tree, None),
+            let (second_tree, removed) = remove_leaf(*second, id);
+            match (first_tree, second_tree) {
+                (Some(first), Some(second)) => (
+                    Some(SplitNode::Split { axis, ratio, first: Box::new(first), second: Box::new(second) }),
+                    removed,
+                ),
+                (Some(first), None) => (Some(first), removed),
+                (None, second_tree) => (second_tree, removed),
             }
         }
     }

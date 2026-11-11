@@ -61,12 +61,12 @@ pub fn copy_file(
     if !source.is_file() {
         return Err(OperationError::MissingSource(source.into()));
     }
-    if source == destination {
-        return Err(OperationError::Conflict(destination.to_path_buf()));
-    }
     let Some(destination) = resolve_destination(destination, policy)? else {
         return Ok(None);
     };
+    // Only refuse once the policy has been applied: AutoRename turns "copy onto
+    // itself" into a genuine duplicate ("a (1).txt"), while Replace/Ask must not
+    // be allowed to copy a file over its own bytes.
     if destination == source {
         return Err(OperationError::Conflict(destination));
     }
@@ -281,16 +281,41 @@ mod tests {
     #[test]
     fn conflict_policies_behave_differently() {
         let dir = tempfile::tempdir().unwrap();
+        // Source and destination live in the same folder but are different files:
+        // using one path for both would make the self-copy guard, not the conflict
+        // policy, decide the result.
         let source = dir.path().join("a.txt");
         std::fs::write(&source, "new").unwrap();
-        let destination = dir.path().join("a.txt");
+        let destination = dir.path().join("dest.txt");
+        std::fs::write(&destination, "old").unwrap();
         assert!(matches!(
             copy_file(&source, &destination, ConflictPolicy::Ask, &control(), &mut |_| {}),
             Err(OperationError::Conflict(_))
         ));
+        assert_eq!(std::fs::read_to_string(&destination).unwrap(), "old");
         assert!(copy_file(&source, &destination, ConflictPolicy::Skip, &control(), &mut |_| {}).unwrap().is_none());
+        assert_eq!(std::fs::read_to_string(&destination).unwrap(), "old");
         let renamed = copy_file(&source, &destination, ConflictPolicy::AutoRename, &control(), &mut |_| {}).unwrap().unwrap();
-        assert_eq!(renamed.file_name().unwrap(), "a (1).txt");
+        assert_eq!(renamed.file_name().unwrap(), "dest (1).txt");
+        assert_eq!(std::fs::read_to_string(&renamed).unwrap(), "new");
+        // Replace overwrites in place.
+        let replaced = copy_file(&source, &destination, ConflictPolicy::Replace, &control(), &mut |_| {}).unwrap().unwrap();
+        assert_eq!(replaced, destination);
+        assert_eq!(std::fs::read_to_string(&destination).unwrap(), "new");
+    }
+
+    #[test]
+    fn a_file_is_never_copied_over_itself() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("a.txt");
+        std::fs::write(&source, "payload").unwrap();
+        // Replace and Ask must refuse; AutoRename makes a genuine duplicate.
+        assert!(copy_file(&source, &source, ConflictPolicy::Replace, &control(), &mut |_| {}).is_err());
+        assert!(copy_file(&source, &source, ConflictPolicy::Ask, &control(), &mut |_| {}).is_err());
+        assert_eq!(std::fs::read_to_string(&source).unwrap(), "payload");
+        let copy = copy_file(&source, &source, ConflictPolicy::AutoRename, &control(), &mut |_| {}).unwrap().unwrap();
+        assert_eq!(copy.file_name().unwrap(), "a (1).txt");
+        assert_eq!(std::fs::read_to_string(&copy).unwrap(), "payload");
     }
 
     #[test]

@@ -11,10 +11,38 @@ pub fn recycle(paths: &[impl AsRef<Path>]) -> Result<usize, OperationError> {
         if fs::symlink_metadata(path).is_err() {
             return Err(OperationError::MissingSource(path.into()));
         }
-        trash::delete(path).map_err(|error| OperationError::Recycle(error.to_string()))?;
-        done += 1;
+        match trash::delete(path) {
+            Ok(()) => done += 1,
+            Err(error) => {
+                // Windows refuses to recycle items while any handle is still open.
+                // A batch is often queued right after the UI last read the files,
+                // so retry briefly before reporting the recycle as unavailable.
+                if !(cfg!(windows) && retry_recycle(path, &error)) {
+                    return Err(OperationError::Recycle(error.to_string()));
+                }
+                done += 1;
+            }
+        }
     }
     Ok(done)
+}
+
+/// One bounded retry for sharing violations; reports whether it succeeded.
+fn retry_recycle(path: &Path, first: &trash::Error) -> bool {
+    // trash::Error's variants differ per platform (FileSystem exists only on
+    // freedesktop, Windows reports Os/Unknown), so match on the description
+    // instead of a variant. Error 32/5 surface as "being used by another
+    // process" or "access is denied".
+    let message = first.to_string().to_lowercase();
+    let transient = message.contains("being used")
+        || message.contains("another process")
+        || message.contains("sharing violation")
+        || message.contains("access is denied");
+    if !transient {
+        return false;
+    }
+    std::thread::sleep(std::time::Duration::from_millis(200));
+    trash::delete(path).is_ok()
 }
 
 /// Irreversible deletion. Requires an explicit confirmation flag from the UI so

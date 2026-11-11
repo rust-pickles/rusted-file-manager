@@ -130,7 +130,9 @@ pub fn scan(root: &Path, options: &ScanOptions, cancel: &AtomicBool) -> Result<S
     tree.bytes = tree.children.iter().map(|child| child.bytes).sum::<u64>() + tree.own_bytes;
     report.total_bytes = tree.bytes;
     report.total_files = tree.files;
-    report.total_folders = tree.folders;
+    // The scanned root counts as a folder; every descendant is added as it is
+    // visited, so "3 files in 2 subfolders of a root" reports 3 folders.
+    report.total_folders = tree.folders + 1;
     report.categories = CATEGORIES
         .iter()
         .map(|name| {

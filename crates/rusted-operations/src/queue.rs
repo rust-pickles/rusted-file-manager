@@ -4,6 +4,7 @@ use crate::{
 };
 use crossbeam_channel::{unbounded, Receiver, Sender};
 use std::collections::HashMap;
+use std::collections::VecDeque;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
@@ -24,6 +25,10 @@ pub struct OperationQueue {
     sender: Sender<Job>,
     progress: Receiver<OperationProgress>,
     progress_sender: Sender<OperationProgress>,
+    /// A second, independently consumed copy of every event, keyed by job id.
+    /// The UI drains the shared channel partially, which would otherwise make it
+    /// impossible to wait for a specific job without racing other events away.
+    per_job: Arc<Mutex<HashMap<Uuid, VecDeque<OperationProgress>>>>,
     controls: Arc<Mutex<HashMap<Uuid, SharedControl>>>,
     history: Arc<Mutex<Vec<OperationProgress>>>,
 }
@@ -34,6 +39,8 @@ impl OperationQueue {
         let (progress_tx, progress_rx) = unbounded::<OperationProgress>();
         let controls: Arc<Mutex<HashMap<Uuid, SharedControl>>> = Arc::new(Mutex::new(HashMap::new()));
         let history: Arc<Mutex<Vec<OperationProgress>>> = Arc::new(Mutex::new(Vec::new()));
+        let per_job: Arc<Mutex<HashMap<Uuid, VecDeque<OperationProgress>>>> =
+            Arc::new(Mutex::new(HashMap::new()));
         let jobs = Arc::new(Mutex::new(jobs_rx));
 
         for _ in 0..worker_count.clamp(1, MAX_WORKERS) {
@@ -41,6 +48,7 @@ impl OperationQueue {
             let events = progress_tx.clone();
             let controls = controls.clone();
             let history = history.clone();
+            let recorded = per_job.clone();
             std::thread::Builder::new()
                 .name("rusted-operation".into())
                 .spawn(move || loop {
@@ -54,7 +62,16 @@ impl OperationQueue {
                             Err(_) => break,
                         }
                     };
-                    run_job(&job, &events, &history);
+                    let record = |event: &OperationProgress| {
+                        if let Ok(mut map) = recorded.lock() {
+                            let buffer = map.entry(event.id).or_default();
+                            buffer.push_back(event.clone());
+                            while buffer.len() > 64 {
+                                buffer.pop_front();
+                            }
+                        }
+                    };
+                    run_job(&job, &events, &history, &record);
                     if let Ok(mut map) = controls.lock() {
                         map.remove(&job.request.id);
                     }
@@ -62,7 +79,31 @@ impl OperationQueue {
                 .expect("operation worker thread");
         }
 
-        Self { sender: jobs_tx, progress: progress_rx, progress_sender: progress_tx, controls, history }
+        Self {
+            sender: jobs_tx,
+            progress: progress_rx,
+            progress_sender: progress_tx,
+            per_job,
+            controls,
+            history,
+        }
+    }
+
+    /// Records an event for later per-job inspection without blocking the UI path.
+    fn record(&self, event: &OperationProgress) {
+        if let Ok(mut map) = self.per_job.lock() {
+            let buffer = map.entry(event.id).or_default();
+            buffer.push_back(event.clone());
+            while buffer.len() > 64 {
+                buffer.pop_front();
+            }
+        }
+    }
+
+    /// Latest recorded event for one job; used by callers that must wait for a
+    /// specific operation to finish without disturbing the UI's own draining.
+    pub fn latest(&self, id: Uuid) -> Option<OperationProgress> {
+        self.per_job.lock().ok()?.get(&id).and_then(|events| events.back().cloned())
     }
 
     pub fn submit(&self, request: OperationRequest, control: SharedControl) -> Result<Uuid, OperationError> {
@@ -72,6 +113,7 @@ impl OperationQueue {
             .map_err(|_| OperationError::Invalid("queue lock poisoned".into()))?
             .insert(id, control.clone());
         let queued = OperationProgress::new(id, request.kind, OperationStatus::Queued, request.sources.len());
+        self.record(&queued);
         let _ = self.progress_sender.send(queued);
         self.sender
             .send(Job { request, control })
@@ -143,13 +185,19 @@ impl OperationQueue {
     }
 }
 
-fn run_job(job: &Job, events: &Sender<OperationProgress>, history: &Arc<Mutex<Vec<OperationProgress>>>) {
+fn run_job(
+    job: &Job,
+    events: &Sender<OperationProgress>,
+    history: &Arc<Mutex<Vec<OperationProgress>>>,
+    record: &(dyn Fn(&OperationProgress) + Sync),
+) {
     let request = &job.request;
     let id = request.id;
     let kind = request.kind;
     let total = request.sources.len();
     let started = Instant::now();
     let mut progress = OperationProgress::new(id, kind, OperationStatus::Running, total);
+    record(&progress);
     let _ = events.send(progress.clone());
 
     let result = execute(request, &job.control, |completed, current| {
@@ -158,6 +206,7 @@ fn run_job(job: &Job, events: &Sender<OperationProgress>, history: &Arc<Mutex<Ve
         progress.bytes_done = job.control.bytes();
         progress.bytes_per_second = job.control.bytes() as f64 / started.elapsed().as_secs_f64().max(0.001);
         progress.status = if job.control.is_paused() { OperationStatus::Paused } else { OperationStatus::Running };
+        record(&progress);
         let _ = events.send(progress.clone());
     });
 
@@ -174,6 +223,7 @@ fn run_job(job: &Job, events: &Sender<OperationProgress>, history: &Arc<Mutex<Ve
             progress.error = Some(error.to_string());
         }
     }
+    record(&progress);
     let _ = events.send(progress.clone());
     if let Ok(mut entries) = history.lock() {
         entries.push(progress);
@@ -258,19 +308,21 @@ mod tests {
     use std::sync::Arc;
     use std::time::Duration;
 
-    fn drain_until<F: Fn(&OperationProgress) -> bool>(queue: &OperationQueue, predicate: F) -> OperationProgress {
+    /// Waits for one job's finished event. This reads the per-job buffer instead
+    /// of the shared channel: draining the shared channel here discarded events
+    /// belonging to other jobs, so waiting for three sequential copies could not
+    /// see more than one completion.
+    fn wait_for(queue: &OperationQueue, id: Uuid) -> OperationProgress {
         let deadline = Instant::now() + Duration::from_secs(20);
-        let mut last = None;
         while Instant::now() < deadline {
-            while let Some(event) = queue.try_progress() {
-                if predicate(&event) {
+            if let Some(event) = queue.latest(id) {
+                if event.status.is_finished() {
                     return event;
                 }
-                last = Some(event);
             }
             std::thread::sleep(Duration::from_millis(20));
         }
-        panic!("timed out waiting for progress; last = {last:?}");
+        panic!("timed out waiting for job {id}");
     }
 
     #[test]
@@ -284,7 +336,7 @@ mod tests {
         let request = OperationRequest::new(OperationKind::Copy, vec![source], target.clone())
             .with_conflict(ConflictPolicy::Replace);
         let id = queue.submit(request, Arc::new(OperationControl::default())).unwrap();
-        let event = drain_until(&queue, |event| event.id == id && event.status.is_finished());
+        let event = wait_for(&queue, id);
         assert_eq!(event.status, OperationStatus::Completed);
         assert_eq!(std::fs::read_to_string(target.join("src.txt")).unwrap(), "payload");
         assert_eq!(queue.history().len(), 1);
@@ -308,7 +360,7 @@ mod tests {
             .with_conflict(ConflictPolicy::Replace);
         let id = queue.submit(request, control.clone()).unwrap();
         queue.cancel(id);
-        let event = drain_until(&queue, |event| event.id == id && event.status.is_finished());
+        let event = wait_for(&queue, id);
         assert!(matches!(event.status, OperationStatus::Cancelled | OperationStatus::Completed));
     }
 
@@ -320,7 +372,7 @@ mod tests {
         let queue = OperationQueue::new(1);
         let request = OperationRequest::new(OperationKind::Delete, vec![file.clone()], dir.path().to_path_buf());
         let id = queue.submit(request, Arc::new(OperationControl::default())).unwrap();
-        let event = drain_until(&queue, |event| event.id == id && event.status.is_finished());
+        let event = wait_for(&queue, id);
         // On headless CI hosts the Recycle Bin may be unavailable; either the
         // file is gone or the failure is reported explicitly.
         if event.status == OperationStatus::Completed {
@@ -339,7 +391,7 @@ mod tests {
         let queue = OperationQueue::new(1);
         let request = OperationRequest::new(OperationKind::DeletePermanent, vec![file.clone()], dir.path().to_path_buf());
         let id = queue.submit(request, Arc::new(OperationControl::default())).unwrap();
-        let event = drain_until(&queue, |event| event.id == id && event.status.is_finished());
+        let event = wait_for(&queue, id);
         assert_eq!(event.status, OperationStatus::Failed);
         assert!(file.exists());
     }
@@ -359,7 +411,7 @@ mod tests {
             ids.push(queue.submit(request, Arc::new(OperationControl::default())).unwrap());
         }
         for id in ids {
-            drain_until(&queue, |event| event.id == id && event.status.is_finished());
+            wait_for(&queue, id);
         }
         let history = queue.history();
         assert_eq!(history.len(), 3);

@@ -131,6 +131,9 @@ mod tests {
         let visible = read_directory(temp.path(), false, SortSpec::default()).unwrap();
         assert_eq!(visible.len(), 2);
         assert!(all.iter().any(|entry| entry.kind == EntryKind::Directory));
+        // The dotfile is hidden on every platform, Windows included.
+        assert!(all.iter().any(|entry| entry.name == ".hidden" && entry.hidden));
+        assert!(!visible.iter().any(|entry| entry.name == ".hidden"));
     }
 
     #[test]

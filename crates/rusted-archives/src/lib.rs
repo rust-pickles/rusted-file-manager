@@ -64,7 +64,17 @@ pub trait Archive {
         if let Some(parent) = target.parent() {
             std::fs::create_dir_all(parent).map_err(|source| ArchiveError::Io { path: parent.into(), source })?;
         }
-        if path.ends_with('/') {
+        // Ask the table of contents whether this is a directory. A trailing "/"
+        // in the entry name is not reliable (TAR stores "." or "docs" for dirs,
+        // and normalise() strips the slash), so relying on it wrote directories
+        // out as empty files.
+        let is_dir = self
+            .entries()
+            .iter()
+            .find(|entry| entry.path.trim_end_matches('/') == path.trim_end_matches('/'))
+            .map(|entry| entry.is_dir)
+            .unwrap_or_else(|| path.ends_with('/'));
+        if is_dir {
             std::fs::create_dir_all(&target).map_err(|source| ArchiveError::Io { path: target.clone(), source })?;
             return Ok(target);
         }

@@ -137,6 +137,12 @@ mod tests {
         let mut seen = Vec::new();
         crate::extract_all(&mut archive, &out, &AtomicBool::new(false), |done, total| seen.push((done, total))).unwrap();
         assert_eq!(std::fs::read_to_string(out.join("docs/readme.md")).unwrap(), "# hello");
+        // Directory entries must be created as directories. They used to be written
+        // out as empty files because extraction trusted a trailing "/" that
+        // normalisation had already stripped.
+        assert!(out.join("docs").is_dir());
+        assert!(out.join("docs/sub").is_dir());
+        assert!(archive.entries().iter().any(|entry| entry.is_dir));
         assert_eq!(seen.last().copied(), Some((archive.entries().len(), archive.entries().len())));
     }
 

@@ -286,8 +286,24 @@ mod tests {
             ..Default::default()
         };
         let previews = preview_batch(&sources, &spec);
+        // The recipe is applied in order: find/replace rewrites the stem, then the
+        // sequence number is appended, then prefix and extension are added. Every
+        // "e" goes, including the one at the end of the stem, so the numbering
+        // directly follows the shortened stem.
         assert_eq!(previews[0].new_name(), "photo_on001.txt");
         assert_eq!(previews[1].new_name(), "photo_tw002.txt");
+        assert_eq!(previews[2].new_name(), "photo_thr003.txt");
+    }
+
+    #[test]
+    fn numbering_pads_to_the_requested_width() {
+        let dir = tempfile::tempdir().unwrap();
+        let sources = files(dir.path(), &["a.txt"]);
+        // A width narrower than the number must not truncate it.
+        let narrow = BatchRenameSpec { number_start: Some(7), number_width: 1, ..Default::default() };
+        assert_eq!(preview_batch(&sources, &narrow)[0].new_name(), "a7.txt");
+        let wide = BatchRenameSpec { number_start: Some(7), number_width: 5, step: 3, ..Default::default() };
+        assert_eq!(preview_batch(&sources, &wide)[0].new_name(), "a00007.txt");
     }
 
     #[test]

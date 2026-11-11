@@ -288,31 +288,40 @@ mod tests {
     #[test]
     fn moving_last_tab_prunes_empty_source() {
         let mut workspace = Workspace::new("a".into(), ViewMode::Details);
-        let id = workspace.active_tab().id;
-        let destination = workspace.move_or_split_tab(id, workspace.active_pane, DropZone::Left).unwrap();
+        // A pane holding a single tab cannot be split: the tab leaves on the way
+        // in, so the emptied pane is pruned straight away. Give it two tabs first.
+        workspace.new_tab("b".into(), ViewMode::Details);
+        let source = workspace.active_pane;
+        let moved = workspace.active_tab().id;
+        let destination = workspace.move_or_split_tab(moved, source, DropZone::Right).unwrap();
         assert_eq!(workspace.root.pane_count(), 2);
-        let other = workspace.active_tab().id;
-        workspace.move_or_split_tab(other, destination, DropZone::Center).unwrap();
+        assert_eq!(workspace.root.pane(source).unwrap().tabs.len(), 1);
+        // Moving that pane's last tab back merges the layout again.
+        workspace.move_or_split_tab(moved, source, DropZone::Center).unwrap();
         assert_eq!(workspace.root.pane_count(), 1);
         assert_eq!(workspace.active_pane().tabs.len(), 2);
+        assert!(workspace.root.pane(destination).is_none());
     }
 
     #[test]
     fn close_pane_merges_all_tabs_into_neighbour() {
         let mut workspace = Workspace::new("a".into(), ViewMode::Details);
-        let id = workspace.active_tab().id;
-        let destination = workspace.move_or_split_tab(id, workspace.active_pane, DropZone::Right).unwrap();
-        workspace.focus_pane(destination);
         workspace.new_tab("b".into(), ViewMode::Details);
+        let source = workspace.active_pane;
+        let moved = workspace.active_tab().id;
+        let destination = workspace.move_or_split_tab(moved, source, DropZone::Right).unwrap();
+        workspace.focus_pane(destination);
+        workspace.new_tab("c".into(), ViewMode::Details);
         let merged = workspace.close_pane_merge(destination).unwrap();
-        assert_eq!(merged.len(), 1);
+        assert_eq!(merged.len(), 2);
         assert_eq!(workspace.root.pane_count(), 1);
-        assert_eq!(workspace.active_pane().tabs.len(), 2);
+        assert_eq!(workspace.active_pane().tabs.len(), 3);
     }
 
     #[test]
     fn resize_is_bounded() {
         let mut workspace = Workspace::new("a".into(), ViewMode::Details);
+        workspace.new_tab("b".into(), ViewMode::Details);
         let original = workspace.active_pane;
         let id = workspace.active_tab().id;
         let destination = workspace.move_or_split_tab(id, original, DropZone::Right).unwrap();
@@ -349,9 +358,11 @@ mod tests {
     #[test]
     fn tab_focus_cycles_in_layout_order() {
         let mut workspace = Workspace::new("a".into(), ViewMode::Details);
+        workspace.new_tab("b".into(), ViewMode::Details);
         let first = workspace.active_pane;
         let id = workspace.active_tab().id;
         let second = workspace.move_or_split_tab(id, first, DropZone::Right).unwrap();
+        assert_eq!(workspace.root.pane_count(), 2);
         workspace.focus_pane(first);
         workspace.cycle_pane();
         assert_eq!(workspace.active_pane, second);
@@ -362,8 +373,12 @@ mod tests {
     #[test]
     fn duplicate_and_rename_tab() {
         let mut workspace = Workspace::new("a".into(), ViewMode::Grid);
+        let original = workspace.active_tab().id;
         let copy = workspace.duplicate_tab().unwrap();
-        assert_ne!(copy, workspace.active_tab().id);
+        // The copy is inserted next to the original and becomes active; it must be
+        // a distinct tab, not the same one re-selected.
+        assert_ne!(copy, original);
+        assert_eq!(workspace.active_tab().id, copy);
         assert!(workspace.rename_tab(copy, Some("Pinned".into())));
         assert_eq!(workspace.tab(copy).unwrap().title(), "Pinned");
         assert!(workspace.rename_tab(copy, None));
