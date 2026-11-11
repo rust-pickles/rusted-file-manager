@@ -7,6 +7,7 @@ members = [
     "crates/rusted-db",
     "crates/rusted-preview",
     "crates/rusted-archives",
+    "crates/rusted-storage",
     "crates/rusted-ui",
     "crates/rusted-app",
 ]
@@ -38,6 +39,7 @@ rusted-db = { path = "crates/rusted-db" }
 rusted-fs = { path = "crates/rusted-fs" }
 rusted-operations = { path = "crates/rusted-operations" }
 rusted-preview = { path = "crates/rusted-preview" }
+rusted-storage = { path = "crates/rusted-storage" }
 rusted-search = { path = "crates/rusted-search" }
 rusted-ui = { path = "crates/rusted-ui" }
 serde = { version = "=1.0.228", features = ["derive"] }
@@ -47,7 +49,7 @@ tempfile = "=3.23.0"
 thiserror = "=2.0.17"
 trash = "=5.2.3"
 uuid = { version = "=1.18.1", features = ["v4", "serde"] }
-zip = { version = "=2.4.2", default-features = false, features = ["deflate", "bzip2", "zstd"] }
+zip = { version = "=5.1.1", default-features = false, features = ["deflate"] }
 
 [profile.release]
 lto = "thin"
