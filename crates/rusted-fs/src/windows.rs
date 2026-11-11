@@ -3,17 +3,24 @@
 
 #![cfg(windows)]
 
+use std::os::windows::fs::OpenOptionsExt;
 use std::os::windows::io::AsRawHandle;
 use std::path::Path;
 use windows_sys::Win32::Storage::FileSystem::{
     FileAttributeTagInfo, GetFileInformationByHandleEx, FILE_ATTRIBUTE_TAG_INFO,
+    FILE_FLAG_BACKUP_SEMANTICS,
 };
 
 pub const IO_REPARSE_TAG_MOUNT_POINT: u32 = 0xA000_0003;
 
 /// Returns the reparse tag of a path, or None when it is not a reparse point.
 pub fn reparse_tag(path: &Path) -> Option<u32> {
-    let file = std::fs::File::open(path).ok()?;
+    // Directories need FILE_FLAG_BACKUP_SEMANTICS to be opened as a handle.
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
+        .open(path)
+        .ok()?;
     let mut info = FILE_ATTRIBUTE_TAG_INFO::default();
     let ok = unsafe {
         GetFileInformationByHandleEx(
@@ -28,12 +35,6 @@ pub fn reparse_tag(path: &Path) -> Option<u32> {
     } else {
         Some(info.ReparseTag)
     }
-}
-
-/// Moves a window to the foreground; used after a second instance is launched so
-/// the existing window comes to front instead of silently ignoring the request.
-pub fn set_foreground(_window: isize) -> bool {
-    false
 }
 
 #[cfg(test)]

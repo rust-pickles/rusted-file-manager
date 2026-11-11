@@ -50,7 +50,7 @@ impl DirectoryWatcher {
     }
 
     pub fn changed(&self) -> bool {
-        !self.events.try_recv().is_err()
+        self.events.try_recv().is_ok()
     }
 }
 

@@ -8,6 +8,8 @@ license.workspace = true
 [dependencies]
 chrono.workspace = true
 crossbeam-channel.workspace = true
+open.workspace = true
+regex.workspace = true
 rusted-core.workspace = true
 rusted-fs.workspace = true
 serde.workspace = true

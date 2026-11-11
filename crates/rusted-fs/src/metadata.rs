@@ -18,8 +18,6 @@ pub fn entry_from_metadata(path: &Path, metadata: &Metadata, file_type: std::fs:
     let kind = if link {
         if is_junction(path) {
             EntryKind::Junction
-        } else if metadata.is_dir() {
-            EntryKind::Directory
         } else {
             EntryKind::Symlink
         }
