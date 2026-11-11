@@ -221,7 +221,6 @@ impl Workspace {
         if !zone.splits() {
             return Ok(self.active_pane);
         }
-        let id = self.active_tab().id;
         let target = self.active_pane;
         let duplicate = self.active_tab().duplicate();
         if self.root.pane_count() >= MAX_VISIBLE_PANES {
