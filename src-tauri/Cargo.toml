@@ -10,11 +10,18 @@ description = "Tauri 2 desktop shell hosting the RUSTED React frontend"
 # delegates every filesystem decision to the backend crates. It deliberately has
 # no business logic of its own so the crates stay usable without a webview.
 [lib]
-name = "rusted_shell"
-# ""rlib"" is deliberately absent: the package also has a bin target with the same
-# name, and an rlib makes Cargo warn about a colliding .pdb on Windows. Tauri only
-# needs the staticlib (desktop) and cdylib (mobile) forms.
-crate-type = ["staticlib", "cdylib"]
+# The lib is named *_lib on purpose (the Tauri 2 template convention). The bin
+# target is `rusted-shell`, and Cargo maps dashes to underscores when naming
+# artifacts, so a lib called `rusted_shell` collides with the binary and makes
+# every Windows build warn about a shared .pdb. A distinct name removes the
+# collision without dropping any crate type.
+#
+# All three types are needed and none is optional:
+#   staticlib - what the desktop binary links against
+#   cdylib    - what the mobile entry point loads
+#   rlib      - what main.rs and the unit tests link against
+name = "rusted_shell_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
