@@ -6,8 +6,11 @@ rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
+chrono.workspace = true
 gpui.workspace = true
 image.workspace = true
+lru.workspace = true
+open.workspace = true
 rusted-archives.workspace = true
 rusted-core.workspace = true
 rusted-db.workspace = true
@@ -16,4 +19,8 @@ rusted-operations.workspace = true
 rusted-preview.workspace = true
 rusted-search.workspace = true
 rusted-storage.workspace = true
-open.workspace = true
+unicode-segmentation.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
