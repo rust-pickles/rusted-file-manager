@@ -290,8 +290,10 @@ mod tests {
         // sequence number is appended, then prefix and extension are added. Every
         // "e" goes, including the one at the end of the stem, so the numbering
         // directly follows the shortened stem.
+        // "one", "two" and "three": the first contains an "e", the other two end
+        // with one, so their numbers directly follow the shortened stem.
         assert_eq!(previews[0].new_name(), "photo_on001.txt");
-        assert_eq!(previews[1].new_name(), "photo_tw002.txt");
+        assert_eq!(previews[1].new_name(), "photo_two002.txt");
         assert_eq!(previews[2].new_name(), "photo_thr003.txt");
     }
 

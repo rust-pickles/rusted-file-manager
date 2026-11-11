@@ -10,4 +10,6 @@ pub fn fuzzy_score(query:&str,candidate:&str)->Option<i32>{
     (qi==q.len()).then_some((gaps*4+first*2+span.saturating_sub(q.len()))as i32)
 }
 pub fn filter_sorted<T>(query:&str,items:impl IntoIterator<Item=T>,name:impl Fn(&T)->&str,limit:usize)->Vec<T>{let mut matches:Vec<_>=items.into_iter().filter_map(|item|fuzzy_score(query,name(&item)).map(|score|(score,item))).collect();matches.sort_by(|a,b|a.0.cmp(&b.0));matches.truncate(limit);matches.into_iter().map(|(_,item)|item).collect()}
-#[cfg(test)]mod tests{use super::*;#[test]fn subsequence_and_order(){assert!(fuzzy_score("rfc","RustedFileManager").is_some());assert!(fuzzy_score("xyz","Rusted").is_none());assert!(fuzzy_score("file","file.rs").unwrap()<fuzzy_score("file","f-i-l-e.rs").unwrap());}}
+#[cfg(test)]mod tests{use super::*;#[test]fn subsequence_and_order(){// Initials of "Rusted File Manager". "rfc" was wrong: there is no "c" in
+    // the candidate at all, and a subsequence match must require every character.
+    assert!(fuzzy_score("rfm","RustedFileManager").is_some());assert!(fuzzy_score("xyz","Rusted").is_none());assert!(fuzzy_score("file","file.rs").unwrap()<fuzzy_score("file","f-i-l-e.rs").unwrap());}}
