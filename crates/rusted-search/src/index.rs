@@ -12,7 +12,7 @@ impl SearchIndex{
     fn initialize(connection:Connection)->Result<Self,SearchError>{connection.execute_batch("PRAGMA journal_mode=WAL;PRAGMA synchronous=NORMAL;PRAGMA foreign_keys=ON;CREATE TABLE IF NOT EXISTS entries(path TEXT PRIMARY KEY,name TEXT NOT NULL,size INTEGER NOT NULL,modified INTEGER,kind TEXT NOT NULL,extension TEXT,root TEXT NOT NULL);CREATE INDEX IF NOT EXISTS entries_name ON entries(name);CREATE INDEX IF NOT EXISTS entries_root ON entries(root);CREATE VIRTUAL TABLE IF NOT EXISTS entries_fts USING fts5(name,path,content='entries',content_rowid='rowid');CREATE TRIGGER IF NOT EXISTS entries_ai AFTER INSERT ON entries BEGIN INSERT INTO entries_fts(rowid,name,path) VALUES(new.rowid,new.name,new.path);END;CREATE TRIGGER IF NOT EXISTS entries_ad AFTER DELETE ON entries BEGIN INSERT INTO entries_fts(entries_fts,rowid,name,path) VALUES('delete',old.rowid,old.name,old.path);END;CREATE TRIGGER IF NOT EXISTS entries_au AFTER UPDATE ON entries BEGIN INSERT INTO entries_fts(entries_fts,rowid,name,path) VALUES('delete',old.rowid,old.name,old.path);INSERT INTO entries_fts(rowid,name,path) VALUES(new.rowid,new.name,new.path);END;CREATE TABLE IF NOT EXISTS roots(path TEXT PRIMARY KEY,indexed_at INTEGER NOT NULL);")?;Ok(Self{connection})}
     pub fn index_root(&self,root:&Path,exclusions:&[PathBuf],cancel:&AtomicBool,mut on_progress:impl FnMut(IndexStats))->Result<IndexStats,SearchError>{
         let started=Instant::now();let mut stats=IndexStats::default();let transaction=self.connection.unchecked_transaction()?;
-        walk(root,root,exclusions,cancel,&transaction,&mut stats)?;let now=chrono::Utc::now().timestamp();transaction.execute("INSERT INTO roots(path,indexed_at) VALUES(?1,?2) ON CONFLICT(path) DO UPDATE SET indexed_at=excluded.indexed_at",[root.to_string_lossy(),now])?;transaction.commit()?;stats.elapsed_ms=started.elapsed().as_millis();stats.cancelled=cancel.load(Ordering::Relaxed);on_progress(stats.clone());Ok(stats)
+        walk(root,root,exclusions,cancel,&transaction,&mut stats)?;let now=chrono::Utc::now().timestamp();transaction.execute("INSERT INTO roots(path,indexed_at) VALUES(?1,?2) ON CONFLICT(path) DO UPDATE SET indexed_at=excluded.indexed_at",params![root.to_string_lossy(),now])?;transaction.commit()?;stats.elapsed_ms=started.elapsed().as_millis();stats.cancelled=cancel.load(Ordering::Relaxed);on_progress(stats.clone());Ok(stats)
     }
     pub fn upsert_path(&self,path:&Path,root:&Path)->Result<(),SearchError>{let metadata=fs::symlink_metadata(path).map_err(|source|SearchError::Io{path:path.into(),source})?;let file_type=metadata.file_type();let entry=entry_from_metadata(path,&metadata,file_type);insert(&self.connection,&entry,root)?;Ok(())}
     pub fn remove_path(&self,path:&Path)->Result<(),SearchError>{self.connection.execute("DELETE FROM entries WHERE path=?1 OR path LIKE ?2",params![path.to_string_lossy(),format!("{}%",escape_like(&path.to_string_lossy()))])?;Ok(())}
@@ -47,3 +47,81 @@ fn walk(root:&Path,path:&Path,exclusions:&[PathBuf],cancel:&AtomicBool,connectio
     if metadata.is_dir()&&!file_type.is_symlink()&&rusted_core::EntryKind::Junction!=entry.kind{let children=fs::read_dir(path).map_err(|source|SearchError::Io{path:path.into(),source})?;for child in children{let child=child.map_err(|source|SearchError::Io{path:path.into(),source})?;walk(root,&child.path(),exclusions,cancel,connection,stats)?;if cancel.load(Ordering::Relaxed){break;}}}Ok(())
 }
 fn escape_like(value:&str)->String{value.replace('\\',"\\\\").replace('%',"\\%").replace('_',"\\_")}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn temp_root() -> PathBuf {
+        let unique = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let path = std::env::temp_dir().join(format!("rusted-search-{unique}"));
+        fs::create_dir_all(&path).unwrap();
+        path
+    }
+
+    #[test]
+    fn indexing_records_the_root_and_finds_files() {
+        let root = temp_root();
+        fs::write(root.join("quarterly-report.txt"), b"x").unwrap();
+        fs::create_dir_all(root.join("nested")).unwrap();
+        fs::write(root.join("nested").join("invoice.txt"), b"y").unwrap();
+
+        let index = SearchIndex::in_memory().unwrap();
+        let stats = index.index_root(&root, &[], &AtomicBool::new(false), |_| {}).unwrap();
+        assert!(stats.indexed >= 3, "expected root + children, got {stats:?}");
+        assert!(!stats.cancelled);
+        assert!(index.root_indexed_at(&root).unwrap().is_some(), "root timestamp must be stored");
+
+        let hits = index
+            .search(&SearchQuery { text: "quarterly".into(), limit: 10, ..Default::default() })
+            .unwrap();
+        assert!(hits.iter().any(|hit| hit.name == "quarterly-report.txt"));
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn exclusions_and_cancellation_are_honoured() {
+        let root = temp_root();
+        fs::create_dir_all(root.join("skip-me")).unwrap();
+        fs::write(root.join("skip-me").join("hidden.txt"), b"x").unwrap();
+        fs::write(root.join("kept.txt"), b"x").unwrap();
+
+        let index = SearchIndex::in_memory().unwrap();
+        let excluded = vec![root.join("skip-me")];
+        index.index_root(&root, &excluded, &AtomicBool::new(false), |_| {}).unwrap();
+        let hits = index.search(&SearchQuery { text: "hidden".into(), limit: 10, ..Default::default() }).unwrap();
+        assert!(hits.is_empty(), "excluded subtree must not be indexed");
+
+        let cancel = AtomicBool::new(true);
+        let stats = index.index_root(&root, &[], &cancel, |_| {}).unwrap();
+        assert!(stats.cancelled || stats.indexed <= 1);
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn removal_and_filters_narrow_results() {
+        let root = temp_root();
+        fs::write(root.join("note.md"), vec![0u8; 10]).unwrap();
+        fs::write(root.join("note.txt"), vec![0u8; 5000]).unwrap();
+        let index = SearchIndex::in_memory().unwrap();
+        index.index_root(&root, &[], &AtomicBool::new(false), |_| {}).unwrap();
+
+        let by_extension = index
+            .search(&SearchQuery { text: "note".into(), extension: Some("md".into()), limit: 10, ..Default::default() })
+            .unwrap();
+        assert_eq!(by_extension.len(), 1);
+        assert_eq!(by_extension[0].name, "note.md");
+
+        let by_size = index
+            .search(&SearchQuery { text: "note".into(), min_size: Some(1000), limit: 10, ..Default::default() })
+            .unwrap();
+        assert_eq!(by_size.len(), 1);
+        assert_eq!(by_size[0].name, "note.txt");
+
+        index.remove_path(&root.join("note.md")).unwrap();
+        let after = index.search(&SearchQuery { text: "note".into(), limit: 10, ..Default::default() }).unwrap();
+        assert!(!after.iter().any(|hit| hit.name == "note.md"));
+        fs::remove_dir_all(&root).unwrap();
+    }
+}
