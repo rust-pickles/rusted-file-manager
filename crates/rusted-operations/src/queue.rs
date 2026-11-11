@@ -67,7 +67,10 @@ impl OperationQueue {
 
     pub fn submit(&self, request: OperationRequest, control: SharedControl) -> Result<Uuid, OperationError> {
         let id = request.id;
-        self.controls.lock().map_err(|_| OperationError::Invalid("queue lock poisoned".into()))?.insert(id, control);
+        self.controls
+            .lock()
+            .map_err(|_| OperationError::Invalid("queue lock poisoned".into()))?
+            .insert(id, control.clone());
         let queued = OperationProgress::new(id, request.kind, OperationStatus::Queued, request.sources.len());
         let _ = self.progress_sender.send(queued);
         self.sender

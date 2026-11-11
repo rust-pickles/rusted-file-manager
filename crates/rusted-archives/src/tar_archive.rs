@@ -135,7 +135,7 @@ mod tests {
         let out = dir.path().join("out");
         let mut archive = TarArchive::open_gzip(&archive_path).unwrap();
         let mut seen = Vec::new();
-        archive.extract_all(&out, &AtomicBool::new(false), |done, total| seen.push((done, total))).unwrap();
+        crate::extract_all(&mut archive, &out, &AtomicBool::new(false), |done, total| seen.push((done, total))).unwrap();
         assert_eq!(std::fs::read_to_string(out.join("docs/readme.md")).unwrap(), "# hello");
         assert_eq!(seen.last().copied(), Some((archive.entries().len(), archive.entries().len())));
     }

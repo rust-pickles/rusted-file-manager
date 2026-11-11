@@ -10,7 +10,7 @@ pub use tar_archive::TarArchive;
 pub use zip_archive::ZipArchive;
 
 use rusted_core::format_bytes;
-use std::io::{self, Read, Write};
+use std::io::{self, Read};
 use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use thiserror::Error;
@@ -50,7 +50,7 @@ impl ArchiveEntry {
     }
 
     pub fn size_label(&self) -> String {
-        if self.is_dir() { "—".into() } else { format_bytes(self.size) }
+        if self.is_dir { "—".into() } else { format_bytes(self.size) }
     }
 }
 
@@ -71,19 +71,6 @@ pub trait Archive {
         let bytes = self.read_entry(path)?;
         std::fs::write(&target, bytes).map_err(|source| ArchiveError::Io { path: target.clone(), source })?;
         Ok(target)
-    }
-    /// Extracts everything, honouring cancellation between entries.
-    fn extract_all(&mut self, destination: &Path, cancel: &AtomicBool, mut progress: impl FnMut(usize, usize)) -> Result<usize, ArchiveError> {
-        let paths: Vec<String> = self.entries().iter().map(|entry| entry.path.clone()).collect();
-        let total = paths.len();
-        for (index, path) in paths.iter().enumerate() {
-            if cancel.load(Ordering::Relaxed) {
-                return Err(ArchiveError::Cancelled);
-            }
-            self.extract_entry(path, destination)?;
-            progress(index + 1, total);
-        }
-        Ok(total)
     }
 }
 
@@ -108,9 +95,30 @@ pub fn open(path: &Path) -> Result<Box<dyn Archive>, ArchiveError> {
     Err(ArchiveError::Unsupported(format!("no reader for {name}")))
 }
 
-/// Reads a single member out of a plain-file archive without a persistent handle.
+/// Extracts every entry, honouring cancellation between items. Kept as a free
+/// function so the `Archive` trait stays object safe.
+pub fn extract_all(
+    archive: &mut dyn Archive,
+    destination: &Path,
+    cancel: &AtomicBool,
+    mut progress: impl FnMut(usize, usize),
+) -> Result<usize, ArchiveError> {
+    let paths: Vec<String> = archive.entries().iter().map(|entry| entry.path.clone()).collect();
+    let total = paths.len();
+    for (index, path) in paths.iter().enumerate() {
+        if cancel.load(Ordering::Relaxed) {
+            return Err(ArchiveError::Cancelled);
+        }
+        archive.extract_entry(path, destination)?;
+        progress(index + 1, total);
+    }
+    Ok(total)
+}
+
+/// Reads a single member out of an archive without keeping a handle around.
 pub fn read_file(path: &Path, member: &str) -> Result<Vec<u8>, ArchiveError> {
-    open(path)?.read_entry(member)
+    let mut archive = open(path)?;
+    archive.read_entry(member)
 }
 
 /// Joins an archive entry onto an extraction root, rejecting traversal.
@@ -183,8 +191,9 @@ fn add_to_zip(
 }
 
 /// Adds files to an existing archive by rebuilding it into a temporary file.
-/// Entries inside an open handle cannot be appended safely otherwise.
-pub fn add_to_zip(destination: &Path, sources: &[PathBuf], cancel: &AtomicBool) -> Result<usize, ArchiveError> {
+/// Zip writers cannot append to a finished archive in place, so the result is
+/// built beside the original and swapped in with a single rename.
+pub fn add_files_to_zip(destination: &Path, sources: &[PathBuf], cancel: &AtomicBool) -> Result<usize, ArchiveError> {
     let temporary = destination.with_extension("rusted-tmp.zip");
     let mut existing = zip::ZipArchive::new(
         std::fs::File::open(destination).map_err(|source| ArchiveError::Io { path: destination.into(), source })?,
@@ -216,12 +225,4 @@ pub fn add_to_zip(destination: &Path, sources: &[PathBuf], cancel: &AtomicBool) 
     Ok(added)
 }
 
-fn read_to_vec(mut reader: impl Read, hint: usize) -> io::Result<Vec<u8>> {
-    let mut buffer = Vec::with_capacity(hint.min(4 * 1024 * 1024));
-    reader.read_to_end(&mut buffer)?;
-    Ok(buffer)
-}
 
-fn write_all(mut writer: impl Write, bytes: &[u8]) -> io::Result<()> {
-    writer.write_all(bytes)
-}

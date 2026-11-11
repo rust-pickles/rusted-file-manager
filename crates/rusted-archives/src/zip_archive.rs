@@ -86,7 +86,7 @@ mod tests {
         let archive = build_fixture(dir.path());
         let out = dir.path().join("out");
         let mut reader = ZipArchive::open(&archive).unwrap();
-        let count = reader.extract_all(&out, &AtomicBool::new(false), |_, _| {}).unwrap();
+        let count = crate::extract_all(&mut reader, &out, &AtomicBool::new(false), |_, _| {}).unwrap();
         assert!(count >= 4);
         assert_eq!(std::fs::read_to_string(out.join("in/a.txt")).unwrap(), "alpha");
     }
@@ -98,7 +98,7 @@ mod tests {
         let out = dir.path().join("out");
         let mut reader = ZipArchive::open(&archive).unwrap();
         let cancel = AtomicBool::new(true);
-        assert!(matches!(reader.extract_all(&out, &cancel, |_, _| {}), Err(ArchiveError::Cancelled)));
+        assert!(matches!(crate::extract_all(&mut reader, &out, &cancel, |_, _| {}), Err(ArchiveError::Cancelled)));
     }
 
     #[test]
@@ -115,7 +115,7 @@ mod tests {
         let archive = build_fixture(dir.path());
         let extra = dir.path().join("extra.txt");
         std::fs::File::create(&extra).unwrap().write_all(b"charlie").unwrap();
-        let added = crate::add_to_zip(&archive, &[extra], &AtomicBool::new(false)).unwrap();
+        let added = crate::add_files_to_zip(&archive, &[extra], &AtomicBool::new(false)).unwrap();
         assert_eq!(added, 1);
         let mut reader = ZipArchive::open(&archive).unwrap();
         let paths: Vec<_> = reader.entries().iter().map(|entry| entry.path.clone()).collect();
