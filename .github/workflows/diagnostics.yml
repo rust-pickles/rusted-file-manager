@@ -1,0 +1,60 @@
+name: diagnostics
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ["arena/280b8b98-rusted-file-manager"]
+
+permissions:
+  contents: read
+  issues: write
+
+env:
+  CARGO_TERM_COLOR: never
+  CARGO_INCREMENTAL: "0"
+
+jobs:
+  check:
+    # Windows is the shipping target: this job is the real platform verification.
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Show toolchain
+        run: |
+          rustup show
+          cargo --version
+      - name: Check workspace
+        shell: pwsh
+        run: |
+          $log = "check.log"
+          cargo check --workspace --all-targets 2>&1 | Tee-Object -FilePath $log
+          "check_exit=$LASTEXITCODE" | Tee-Object -FilePath $log -Append
+      - name: Test workspace
+        shell: pwsh
+        run: |
+          $log = "test.log"
+          cargo test --workspace 2>&1 | Tee-Object -FilePath $log
+          "test_exit=$LASTEXITCODE" | Tee-Object -FilePath $log -Append
+      - name: Publish diagnostics to issue
+        if: always()
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $body = "Run ${{ github.run_id }} on commit ${{ github.sha }}`n`n"
+          foreach ($file in @("check.log", "test.log")) {
+            if (Test-Path $file) {
+              $text = Get-Content $file -Raw
+              if ($text.Length -gt 55000) { $text = $text.Substring($text.Length - 55000) }
+              $body += "### $file`n``````n$text`n```````n"
+            }
+          }
+          Set-Content -Path comment.md -Value $body -Encoding utf8
+          gh issue comment 1 --repo ${{ github.repository }} --body-file comment.md
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: diagnostics
+          path: "*.log"
