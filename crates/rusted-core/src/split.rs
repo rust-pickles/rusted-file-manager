@@ -469,7 +469,9 @@ mod tests {
         assert_eq!(moved.len(), 1);
         assert_eq!(node.pane_count(), 1);
         assert_eq!(node.panes()[0].tabs.len(), 2);
-        assert_eq!(node.close_pane_merge(a), Err(SplitError::LastPane));
+        // Compare on the error, not the whole Result: the Ok side is Vec<Tab> and
+        // Tab intentionally has no PartialEq.
+        assert!(matches!(node.close_pane_merge(a), Err(SplitError::LastPane)));
     }
 
     #[test]

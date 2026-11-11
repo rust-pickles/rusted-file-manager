@@ -387,7 +387,7 @@ impl Database {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rusted_core::{ThemeName, ViewMode};
+    use rusted_core::ThemeName;
 
     #[test]
     fn settings_roundtrip_keeps_theme_and_are_sanitized() {
