@@ -1,0 +1,27 @@
+{
+  // Type-checking config for the ui/ subtree. Kept at the repo root rather than
+  // inside ui/ so the subtree stays a byte-for-byte mirror of rusted-file-manager-v2
+  // and `git subtree pull` never conflicts. Settings match the frontend's own
+  // tsconfig.json, with rootDir pointed at ui/.
+  "compilerOptions": {
+    "target": "ES2022",
+    "experimentalDecorators": true,
+    "useDefineForClassFields": false,
+    "module": "ESNext",
+    "types": ["vite/client"],
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "skipLibCheck": true,
+    "moduleResolution": "bundler",
+    "isolatedModules": true,
+    "moduleDetection": "force",
+    "allowJs": true,
+    "jsx": "react-jsx",
+    "paths": {
+      "@/*": ["./ui/*"]
+    },
+    "allowImportingTsExtensions": true,
+    "noEmit": true
+  },
+  "include": ["ui"],
+  "exclude": ["dist", "ui/dist", "node_modules"]
+}

@@ -1,7 +1,7 @@
 name: CI
 
 # Every step here propagates the real exit code of the command it runs. There is
-# no `exit 0` anywhere: if `cargo check` or `cargo test` fails, the job fails.
+# no `exit 0` anywhere: if a check or test fails, the job fails.
 on:
   workflow_dispatch:
   push:
@@ -20,8 +20,8 @@ env:
   RUST_BACKTRACE: "1"
 
 jobs:
-  windows:
-    name: build and test (windows-latest x64)
+  backend:
+    name: backend (windows-latest x64)
     runs-on: windows-latest
     env:
       # Commit the lockfile only from this branch; other refs stay read-only.
@@ -34,6 +34,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: rusted-windows
+          # The shell target directory is large and unrelated to the crate tests.
+          workspaces: ". -> target"
 
       - name: Toolchain info
         shell: pwsh
@@ -76,33 +78,34 @@ jobs:
             Write-Host "Committed Cargo.lock as $(git rev-parse --short HEAD)"
           }
 
-      # Runs even if an earlier step failed, so one round trip yields both results.
-      - name: cargo check --workspace --all-targets
+      # Backend crates only. The shell is checked in the `tauri` job, which has
+      # Node and the frontend dist it needs.
+      - name: cargo check backend crates --all-targets
         id: check
         shell: pwsh
         run: |
-          cargo check --workspace --all-targets 2>&1 | Tee-Object -FilePath check.log
+          cargo check --workspace --exclude rusted-shell --all-targets 2>&1 | Tee-Object -FilePath check.log
           $code = $LASTEXITCODE
           "check_exit=$code" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
           exit $code
 
-      - name: cargo test --workspace
+      - name: cargo test backend crates
         id: test
         if: always()
         shell: pwsh
         run: |
           # --no-fail-fast so every failing test is reported in a single run.
-          cargo test --workspace --no-fail-fast 2>&1 | Tee-Object -FilePath test.log
+          cargo test --workspace --exclude rusted-shell --no-fail-fast 2>&1 | Tee-Object -FilePath test.log
           $code = $LASTEXITCODE
           "test_exit=$code" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
           exit $code
 
-      - name: Summarise results
+      - name: Summarise backend results
         if: always()
         shell: pwsh
         run: |
           $lines = @(
-            "### CI summary",
+            "### Backend summary",
             "",
             "| item | value |",
             "| --- | --- |",
@@ -126,7 +129,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          $body = "Run ${{ github.run_id }} on ${{ github.sha }} (check=${{ steps.check.outcome }}, test=${{ steps.test.outcome }})`n`n"
+          $body = "Backend run ${{ github.run_id }} on ${{ github.sha }} (check=${{ steps.check.outcome }}, test=${{ steps.test.outcome }})`n`n"
           foreach ($file in @("check.log", "test.log")) {
             if (Test-Path $file) {
               $text = Get-Content $file -Raw
@@ -137,13 +140,146 @@ jobs:
           Set-Content -Path ci-comment.md -Value $body -Encoding utf8
           gh issue comment 1 --repo ${{ github.repository }} --body-file ci-comment.md
 
-      - name: Upload logs
+      - name: Upload backend logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: ci-logs
+          name: backend-logs
           path: |
             check.log
             test.log
             lockfile.log
             Cargo.lock
+
+  tauri:
+    name: tauri shell (windows-latest x64)
+    runs-on: windows-latest
+    # Independent of the backend job so a shell breakage is reported on its own.
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: rusted-tauri-windows
+          workspaces: "src-tauri -> target"
+
+      # The shell's tauri.conf.json points frontendDist at ../dist, and
+      # tauri-build fails the compile if that directory is missing, so the
+      # frontend is built first. This also proves the React tree compiles.
+      - name: Install frontend dependencies
+        shell: pwsh
+        run: |
+          npm install --no-audit --no-fund 2>&1 | Tee-Object -FilePath npm-install.log
+          exit $LASTEXITCODE
+
+      - name: Type-check the ui/ subtree
+        id: typecheck
+        shell: pwsh
+        run: |
+          npx tsc --noEmit -p tsconfig.ui.json 2>&1 | Tee-Object -FilePath typecheck.log
+          $code = $LASTEXITCODE
+          "typecheck_exit=$code" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          exit $code
+
+      - name: Build the frontend
+        id: frontend
+        shell: pwsh
+        run: |
+          npm run build 2>&1 | Tee-Object -FilePath frontend-build.log
+          $code = $LASTEXITCODE
+          "frontend_exit=$code" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          if ($code -eq 0 -and -not (Test-Path dist/index.html)) {
+            Write-Error "vite build succeeded but dist/index.html is missing"
+            exit 1
+          }
+          exit $code
+
+      # Proves the shell links against Tauri 2 and the backend crates on Windows.
+      - name: cargo check the shell
+        id: shellcheck
+        shell: pwsh
+        run: |
+          cargo check -p rusted-shell --all-targets 2>&1 | Tee-Object -FilePath shell-check.log
+          $code = $LASTEXITCODE
+          "shellcheck_exit=$code" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          exit $code
+
+      - name: Shell unit tests
+        id: shelltest
+        if: always()
+        shell: pwsh
+        run: |
+          cargo test -p rusted-shell --no-fail-fast 2>&1 | Tee-Object -FilePath shell-test.log
+          $code = $LASTEXITCODE
+          "shelltest_exit=$code" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          exit $code
+
+      # The deliverable: a real Windows executable, not just a type-check.
+      - name: cargo build the shell (debug)
+        id: shellbuild
+        if: always()
+        shell: pwsh
+        run: |
+          cargo build -p rusted-shell 2>&1 | Tee-Object -FilePath shell-build.log
+          $code = $LASTEXITCODE
+          if ($code -eq 0) {
+            $exe = Get-Item "target/debug/rusted-shell.exe"
+            "exe bytes: $($exe.Length)"
+          }
+          "shellbuild_exit=$code" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          exit $code
+
+      - name: Summarise shell results
+        if: always()
+        shell: pwsh
+        run: |
+          $lines = @(
+            "### Tauri shell summary",
+            "",
+            "| item | value |",
+            "| --- | --- |",
+            "| commit | ``${{ github.sha }}`` |",
+            "| type-check ui/ | ${{ steps.typecheck.outcome }} |",
+            "| vite build | ${{ steps.frontend.outcome }} |",
+            "| cargo check | ${{ steps.shellcheck.outcome }} |",
+            "| shell tests | ${{ steps.shelltest.outcome }} |",
+            "| cargo build (exe) | ${{ steps.shellbuild.outcome }} |"
+          )
+          $lines | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+
+      - name: Publish shell logs to tracking issue
+        if: always()
+        continue-on-error: true
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $body = "Tauri shell run ${{ github.run_id }} on ${{ github.sha }} (typecheck=${{ steps.typecheck.outcome }}, frontend=${{ steps.frontend.outcome }}, check=${{ steps.shellcheck.outcome }}, test=${{ steps.shelltest.outcome }}, build=${{ steps.shellbuild.outcome }})`n`n"
+          foreach ($file in @("typecheck.log", "frontend-build.log", "shell-check.log", "shell-test.log", "shell-build.log")) {
+            if (Test-Path $file) {
+              $text = Get-Content $file -Raw
+              if ($text.Length -gt 30000) { $text = $text.Substring($text.Length - 30000) }
+              $body += "**$file**`n``````n$text`n``````n`n"
+            }
+          }
+          Set-Content -Path shell-comment.md -Value $body -Encoding utf8
+          gh issue comment 1 --repo ${{ github.repository }} --body-file shell-comment.md
+
+      - name: Upload shell logs and executable
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tauri-shell
+          path: |
+            typecheck.log
+            frontend-build.log
+            shell-check.log
+            shell-test.log
+            shell-build.log
+            target/debug/rusted-shell.exe

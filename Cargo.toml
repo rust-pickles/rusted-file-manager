@@ -8,6 +8,9 @@ members = [
     "crates/rusted-preview",
     "crates/rusted-archives",
     "crates/rusted-storage",
+    # Tauri desktop shell. A workspace member (not its own workspace) so it shares
+    # one dependency graph, one Cargo.lock and the existing pinned versions.
+    "src-tauri",
 ]
 resolver = "2"
 
