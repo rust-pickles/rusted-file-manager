@@ -1,0 +1,149 @@
+name: CI
+
+# Every step here propagates the real exit code of the command it runs. There is
+# no `exit 0` anywhere: if `cargo check` or `cargo test` fails, the job fails.
+on:
+  workflow_dispatch:
+  push:
+    branches: ["arena/**", "main"]
+  pull_request:
+    branches: ["main"]
+
+permissions:
+  contents: write
+  issues: write
+
+env:
+  CARGO_TERM_COLOR: never
+  CARGO_INCREMENTAL: "0"
+  CARGO_NET_RETRY: "4"
+  RUST_BACKTRACE: "1"
+
+jobs:
+  windows:
+    name: build and test (windows-latest x64)
+    runs-on: windows-latest
+    env:
+      # Commit the lockfile only from this branch; other refs stay read-only.
+      LOCKFILE_BRANCH: arena/58da6fd4-rusted-file-manager
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: rusted-windows
+
+      - name: Toolchain info
+        shell: pwsh
+        run: |
+          rustup show
+          cargo --version
+          rustc --version
+
+      # Cargo.lock is resolved here because this is the only environment that can
+      # reach the registry. It is committed back so later builds pin the same graph.
+      - name: Generate Cargo.lock
+        id: lockfile
+        shell: pwsh
+        run: |
+          cargo generate-lockfile 2>&1 | Tee-Object -FilePath lockfile.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if (-not (Test-Path Cargo.lock)) {
+            Write-Error "cargo generate-lockfile succeeded but produced no Cargo.lock"
+            exit 1
+          }
+          $count = (Select-String -Path Cargo.lock -Pattern '^name = ' -AllMatches).Count
+          Write-Host "packages in lockfile: $count"
+          "lockfile_packages=$count" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+
+      - name: Commit Cargo.lock to the working branch
+        if: github.event_name == 'push' && github.ref_name == env.LOCKFILE_BRANCH
+        shell: pwsh
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -- Cargo.lock
+          git diff --cached --quiet -- Cargo.lock
+          if ($LASTEXITCODE -eq 0) {
+            Write-Host "Cargo.lock unchanged; nothing to commit."
+          } else {
+            git commit -m "chore(deps): commit Cargo.lock resolved on windows-latest"
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            git push origin "HEAD:${{ env.LOCKFILE_BRANCH }}"
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            Write-Host "Committed Cargo.lock as $(git rev-parse --short HEAD)"
+          }
+
+      # Runs even if an earlier step failed, so one round trip yields both results.
+      - name: cargo check --workspace --all-targets
+        id: check
+        shell: pwsh
+        run: |
+          cargo check --workspace --all-targets 2>&1 | Tee-Object -FilePath check.log
+          $code = $LASTEXITCODE
+          "check_exit=$code" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          exit $code
+
+      - name: cargo test --workspace
+        id: test
+        if: always()
+        shell: pwsh
+        run: |
+          # --no-fail-fast so every failing test is reported in a single run.
+          cargo test --workspace --no-fail-fast 2>&1 | Tee-Object -FilePath test.log
+          $code = $LASTEXITCODE
+          "test_exit=$code" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          exit $code
+
+      - name: Summarise results
+        if: always()
+        shell: pwsh
+        run: |
+          $lines = @(
+            "### CI summary",
+            "",
+            "| item | value |",
+            "| --- | --- |",
+            "| commit | ``${{ github.sha }}`` |",
+            "| check | ${{ steps.check.outcome }} (exit ${{ steps.check.outputs.check_exit }}) |",
+            "| test | ${{ steps.test.outcome }} (exit ${{ steps.test.outputs.test_exit }}) |",
+            "| lockfile packages | ${{ steps.lockfile.outputs.lockfile_packages }} |"
+          )
+          $lines | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+          if (Test-Path test.log) {
+            $ok = (Select-String -Path test.log -Pattern 'test result: ok\.' -AllMatches).Count
+            $bad = (Select-String -Path test.log -Pattern 'test result: FAILED\.' -AllMatches).Count
+            "test binaries ok: $ok, failed: $bad" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+          }
+
+      # Diagnostics only: publishing logs must never decide pass/fail.
+      - name: Publish logs to tracking issue
+        if: always()
+        continue-on-error: true
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $body = "Run ${{ github.run_id }} on ${{ github.sha }} (check=${{ steps.check.outcome }}, test=${{ steps.test.outcome }})`n`n"
+          foreach ($file in @("check.log", "test.log")) {
+            if (Test-Path $file) {
+              $text = Get-Content $file -Raw
+              if ($text.Length -gt 55000) { $text = $text.Substring($text.Length - 55000) }
+              $body += "**$file**`n``````n$text`n``````n`n"
+            }
+          }
+          Set-Content -Path ci-comment.md -Value $body -Encoding utf8
+          gh issue comment 1 --repo ${{ github.repository }} --body-file ci-comment.md
+
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-logs
+          path: |
+            check.log
+            test.log
+            lockfile.log
+            Cargo.lock

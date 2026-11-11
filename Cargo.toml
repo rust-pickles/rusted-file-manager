@@ -8,8 +8,6 @@ members = [
     "crates/rusted-preview",
     "crates/rusted-archives",
     "crates/rusted-storage",
-    "crates/rusted-ui",
-    "crates/rusted-app",
 ]
 resolver = "2"
 
@@ -26,7 +24,6 @@ chrono = { version = "=0.4.42", default-features = false, features = ["clock", "
 crossbeam-channel = "=0.5.15"
 directories = "=6.0.0"
 flate2 = "=1.1.5"
-gpui = { git = "https://github.com/zed-industries/zed", rev = "f22590dc2418906e82d116f6ccc50de1093b4172" }
 image = { version = "=0.25.8", default-features = false, features = ["png", "jpeg", "gif", "bmp", "ico"] }
 lru = "=0.16.2"
 notify = "=8.2.0"
@@ -41,15 +38,14 @@ rusted-operations = { path = "crates/rusted-operations" }
 rusted-preview = { path = "crates/rusted-preview" }
 rusted-storage = { path = "crates/rusted-storage" }
 rusted-search = { path = "crates/rusted-search" }
-rusted-ui = { path = "crates/rusted-ui" }
 serde = { version = "=1.0.228", features = ["derive"] }
 serde_json = "=1.0.145"
 tar = "=0.4.44"
 tempfile = "=3.23.0"
 thiserror = "=2.0.17"
 trash = "=5.2.3"
-unicode-segmentation = "=1.12.0"
 uuid = { version = "=1.18.1", features = ["v4", "serde"] }
+windows-sys = { version = "=0.61.2", features = ["Win32_Storage_FileSystem"] }
 zip = { version = "=5.1.1", default-features = false, features = ["deflate"] }
 
 [profile.release]
