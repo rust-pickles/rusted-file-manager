@@ -237,7 +237,9 @@ jobs:
             Write-Error "cargo build succeeded but target/debug/rusted-shell.exe does not exist"
             exit 1
           }
-          "exe bytes: $($exe.Length)"
+          # Echo into the log as well as the job outputs, so the recorded evidence
+          # survives in the uploaded artifact and not just in the run metadata.
+          "exe bytes: $($exe.Length)" | Tee-Object -FilePath shell-build.log -Append
           "exe_bytes=$($exe.Length)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
           if ($exe.Length -lt 1MB) {
             Write-Error "rusted-shell.exe is only $($exe.Length) bytes; expected a linked Windows binary"
