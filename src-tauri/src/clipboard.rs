@@ -12,14 +12,13 @@
 
 use std::path::PathBuf;
 
-use windows_sys::Win32::Foundation::{HANDLE, HGLOBAL};
+use windows_sys::Win32::Foundation::{GlobalFree, HANDLE, HGLOBAL};
 use windows_sys::Win32::System::DataExchange::{
     CloseClipboard, EmptyClipboard, GetClipboardData, IsClipboardFormatAvailable, OpenClipboard,
     SetClipboardData,
 };
-use windows_sys::Win32::System::Memory::{
-    GlobalAlloc, GlobalFree, GlobalLock, GlobalUnlock, GMEM_MOVEABLE,
-};
+// GlobalFree lives in Foundation rather than Memory in windows-sys.
+use windows_sys::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE};
 use windows_sys::Win32::System::Ole::CF_HDROP;
 use windows_sys::Win32::UI::Shell::DragQueryFileW;
 
