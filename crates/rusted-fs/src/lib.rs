@@ -14,7 +14,7 @@ pub mod watcher;
 pub mod windows;
 
 pub use directory::*;
-pub use drives::{drives, DriveInfo, KnownFolder};
+pub use drives::{drive_capacity, drive_health, drives, DriveHealth, DriveInfo, KnownFolder};
 pub use metadata::*;
 pub use paths::*;
 pub use watcher::*;
