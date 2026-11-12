@@ -190,17 +190,28 @@ impl KnownFolder {
                 roots.push(path);
             }
         }
+        // Ask the shell first. It knows about OneDrive and registry redirection,
+        // so it returns the folder the user actually sees in Explorer. Guessing
+        // `profile\Pictures` first used to win over a redirected Pictures simply
+        // because that differently-named folder existed.
+        for root in &roots {
+            if self != Self::Home {
+                if let Some(path) = read_shell_redirect(root, self.folder_name()) {
+                    return Some(path);
+                }
+            }
+        }
+        // Fallback for hosts where the shell says nothing: take the folder with
+        // the expected name, but only if nothing redirected it. A OneDrive stub
+        // or a junction left behind at `profile\Pictures` points somewhere else
+        // entirely, and listing it is exactly the "one random folder" symptom.
         for root in roots {
             if self == Self::Home && root.is_dir() {
                 return Some(root);
             }
             let candidate = root.join(self.folder_name());
-            if candidate.is_dir() {
+            if candidate.is_dir() && !is_redirected(&candidate) {
                 return Some(candidate);
-            }
-            let redirected = read_shell_redirect(&root, self.folder_name());
-            if let Some(path) = redirected {
-                return Some(path);
             }
         }
         None
@@ -214,21 +225,83 @@ fn home_directory() -> Option<PathBuf> {
         .filter(|path| path.is_dir())
 }
 
-/// Windows lets users relocate known folders; `desktop.ini` records the target.
-fn read_shell_redirect(root: &std::path::Path, folder: &str) -> Option<PathBuf> {
-    let ini = std::fs::read_to_string(root.join(folder).join("desktop.ini")).ok()?;
-    let mut redirected = false;
-    for line in ini.lines() {
-        if line.trim().eq_ignore_ascii_case("FolderType=Redirected") {
-            redirected = true;
-            break;
-        }
+/// Asks the Windows shell where a known folder really lives for this user.
+///
+/// This is the authority, not the folder name. OneDrive moves Pictures,
+/// Documents, Desktop and Videos into `C:\Users\<user>\OneDrive\...` and
+/// records the new location in the registry; the folder under the profile is
+/// either reduced to a stub or to a *different* directory that happens to share
+/// the name. Joining the profile with "Pictures" therefore lists the wrong
+/// folder, which is how a user ends up seeing one unrelated directory instead of
+/// their real pictures.
+///
+/// `SHGetKnownFolderPath` resolves the redirection exactly as Explorer does, so
+/// this replaces the old desktop.ini sniffing, which could never find a target
+/// and silently returned `None` for every redirected folder.
+#[cfg(windows)]
+fn read_shell_redirect(_root: &std::path::Path, folder: &str) -> Option<PathBuf> {
+    use windows_sys::Win32::UI::Shell::{
+        FOLDERID_Desktop, FOLDERID_Documents, FOLDERID_Downloads, FOLDERID_Music,
+        FOLDERID_Pictures, FOLDERID_Profile, FOLDERID_Videos, SHGetKnownFolderPath,
+    };
+
+    let id = match folder {
+        "Desktop" => &FOLDERID_Desktop,
+        "Documents" => &FOLDERID_Documents,
+        "Downloads" => &FOLDERID_Downloads,
+        "Pictures" => &FOLDERID_Pictures,
+        "Music" => &FOLDERID_Music,
+        "Videos" => &FOLDERID_Videos,
+        _ => &FOLDERID_Profile,
+    };
+
+    let mut wide: *mut u16 = std::ptr::null_mut();
+    // SAFETY: the shell allocates the string and hands ownership to us; it is
+    // released with CoTaskMemFree below. A null pointer means failure.
+    // 0 is KF_FLAG_DEFAULT; spelled as a literal so this does not depend on the
+    // constant being generated for the bindings version in use.
+    let hr = unsafe { SHGetKnownFolderPath(id, 0, std::ptr::null_mut(), &mut wide) };
+    if hr < 0 || wide.is_null() {
+        return None;
     }
-    // The redirect target lives in the user's registry (User Shell Folders).
-    // Reimplementing registry parsing here would duplicate the shell, so the
-    // caller falls back to the sidebar entry being hidden instead of guessing.
-    let _ = redirected;
+
+    // SAFETY: on success the shell guaranteed a NUL-terminated wide string, and
+    // the pointer stays valid until the CoTaskMemFree below.
+    let path = unsafe {
+        let mut len = 0usize;
+        while *wide.add(len) != 0 {
+            len += 1;
+        }
+        let slice = std::slice::from_raw_parts(wide, len);
+        PathBuf::from(String::from_utf16_lossy(slice))
+    };
+
+    // SAFETY: the pointer came from the shell allocator for this call only.
+    unsafe { windows_sys::Win32::System::Com::CoTaskMemFree(wide.cast()) };
+
+    path.is_dir().then_some(path)
+}
+
+#[cfg(not(windows))]
+fn read_shell_redirect(_root: &std::path::Path, _folder: &str) -> Option<PathBuf> {
     None
+}
+
+/// True when the path is a junction, symlink or cloud reparse point.
+///
+/// A redirect left by OneDrive or by Windows' "Move" feature looks like a
+/// normal directory but points elsewhere; treating it as the real folder is how
+/// the wrong contents end up on screen.
+#[cfg(windows)]
+fn is_redirected(path: &std::path::Path) -> bool {
+    // IO_REPARSE_TAG_MOUNT_POINT (junction) and IO_REPARSE_TAG_SYMLINK are the
+    // two that silently retarget a directory.
+    matches!(crate::windows::reparse_tag(path), Some(tag) if tag == 0xA000_0003 || tag == 0xA000_000C)
+}
+
+#[cfg(not(windows))]
+fn is_redirected(_path: &std::path::Path) -> bool {
+    false
 }
 
 #[cfg(test)]

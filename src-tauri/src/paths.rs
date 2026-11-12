@@ -137,6 +137,26 @@ pub fn to_real(virtual_path: &str) -> Option<PathBuf> {
 /// Paths inside the profile folder become `/Home/...` so breadcrumbs stay
 /// short; everything else keeps its native spelling.
 pub fn to_virtual(real: &Path) -> String {
+    // Known folders win over the plain path: OneDrive relocates Pictures to
+    // `OneDrive\Pictures`, and showing that as "/Home/OneDrive/Pictures" would
+    // disagree with the sidebar entry that produced it. Resolving through the
+    // known folder keeps the two spellings identical, so navigation round-trips.
+    for (name, folder) in HOME_FOLDERS.iter() {
+        if *folder == rusted_fs::KnownFolder::Home {
+            continue;
+        }
+        if let Some(base) = folder.path() {
+            if let Ok(rest) = real.strip_prefix(&base) {
+                let mut text = format!("{VIRTUAL_HOME}/{name}");
+                for part in rest.iter() {
+                    text.push('/');
+                    text.push_str(&part.to_string_lossy());
+                }
+                return text;
+            }
+        }
+    }
+
     if let Some(home) = home_directory() {
         if let Ok(rest) = real.strip_prefix(&home) {
             let mut text = String::from(VIRTUAL_HOME);
@@ -281,6 +301,21 @@ mod tests {
     fn unknown_virtual_roots_do_not_resolve() {
         // A bogus top-level segment must not be invented into a path.
         assert!(to_real("/DefinitelyNotAThing/x").is_none());
+    }
+
+    #[test]
+    fn known_folders_round_trip_through_their_own_name() {
+        // A redirected known folder must still spell as "/Home/<Name>", or the
+        // sidebar entry and the breadcrumb disagree after one navigation.
+        for (name, folder) in HOME_FOLDERS.iter() {
+            if *folder == rusted_fs::KnownFolder::Home {
+                continue;
+            }
+            let Some(real) = folder.path() else { continue };
+            let virtual_path = to_virtual(&real);
+            assert_eq!(virtual_path, format!("/Home/{name}"), "{real:?}");
+            assert_eq!(to_real(&virtual_path).as_deref(), Some(real.as_path()), "{name} did not round-trip");
+        }
     }
 
     #[test]

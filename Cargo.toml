@@ -48,7 +48,16 @@ tempfile = "=3.23.0"
 thiserror = "=2.0.17"
 trash = "=5.2.3"
 uuid = { version = "=1.18.1", features = ["v4", "serde"] }
-windows-sys = { version = "=0.61.2", features = ["Win32_Storage_FileSystem"] }
+windows-sys = { version = "=0.61.2", features = [
+    "Win32_Storage_FileSystem",
+    # HANDLE/HRESULT definitions the shell call is declared in terms of.
+    "Win32_Foundation",
+    # SHGetKnownFolderPath: the only reliable way to resolve a redirected known
+    # folder (OneDrive Pictures/Documents/Desktop) the way Explorer does.
+    "Win32_UI_Shell",
+    # CoTaskMemFree releases the string the shell allocates for that call.
+    "Win32_System_Com",
+] }
 zip = { version = "=5.1.1", default-features = false, features = ["deflate"] }
 
 [profile.release]
