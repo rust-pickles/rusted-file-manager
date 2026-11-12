@@ -246,10 +246,16 @@ mod tests {
     fn names_that_could_escape_are_rejected() {
         assert!(validate_new_name("report.txt").is_ok());
         assert!(validate_new_name(" spaced name .txt ").is_ok());
-        for bad in ["", "   ", ".", "..", "a/b", "a\\b", "C:evil", "a<b", "a|b", "a?b", "a*b", "con", "NUL.txt", "trailing.", "trailing "] {
+        for bad in ["", "   ", ".", "..", "a/b", "a\\b", "C:evil", "a<b", "a|b", "a?b", "a*b", "con", "NUL.txt", "trailing."] {
             assert!(validate_new_name(bad).is_err(), "should reject {bad:?}");
         }
         assert!(validate_new_name("line\nbreak").is_err());
+
+        // Surrounding whitespace is trimmed rather than rejected, matching what
+        // Windows does to names anyway. The caller must use the returned value,
+        // which is the trimmed one, so the name on disk matches what is reported.
+        assert_eq!(validate_new_name("  report.txt  ").unwrap(), "report.txt");
+        assert_eq!(validate_new_name("trailing ").unwrap(), "trailing");
     }
 
     #[test]
