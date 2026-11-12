@@ -215,6 +215,8 @@ jobs:
         if: always()
         shell: pwsh
         run: |
+          # Covers path translation (virtual <-> native), name validation and the
+          # DTO contract; these are the pieces most likely to be wrong silently.
           cargo test -p rusted-shell --no-fail-fast 2>&1 | Tee-Object -FilePath shell-test.log
           $code = $LASTEXITCODE
           "shelltest_exit=$code" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
@@ -246,6 +248,30 @@ jobs:
             exit 1
           }
 
+      # The real deliverable: an NSIS installer, built the same way a user would
+      # build it. This is what proves "install it on Windows" actually works,
+      # rather than only proving the binary links.
+      - name: Build the release app and NSIS installer
+        id: installer
+        shell: pwsh
+        run: |
+          npx tauri build --bundles nsis 2>&1 | Tee-Object -FilePath installer.log
+          $code = $LASTEXITCODE
+          if ($code -ne 0) { exit $code }
+          $setup = Get-ChildItem "target/release/bundle/nsis" -Filter "*setup.exe" -ErrorAction SilentlyContinue |
+            Sort-Object LastWriteTime -Descending | Select-Object -First 1
+          if (-not $setup) {
+            Write-Error "tauri build succeeded but produced no *setup.exe"
+            exit 1
+          }
+          if ($setup.Length -lt 1MB) {
+            Write-Error "installer is only $($setup.Length) bytes"
+            exit 1
+          }
+          "installer: $($setup.FullName)"
+          "installer bytes: $($setup.Length)" | Tee-Object -FilePath installer.log -Append
+          "installer_bytes=$($setup.Length)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+
       - name: Summarise shell results
         if: always()
         shell: pwsh
@@ -260,7 +286,8 @@ jobs:
             "| vite build | ${{ steps.frontend.outcome }} |",
             "| cargo check | ${{ steps.shellcheck.outcome }} |",
             "| shell tests | ${{ steps.shelltest.outcome }} |",
-            "| cargo build (exe) | ${{ steps.shellbuild.outcome }} (${{ steps.shellbuild.outputs.exe_bytes }} bytes) |"
+            "| cargo build (exe) | ${{ steps.shellbuild.outcome }} (${{ steps.shellbuild.outputs.exe_bytes }} bytes) |",
+            "| NSIS installer | ${{ steps.installer.outcome }} (${{ steps.installer.outputs.installer_bytes }} bytes) |"
           )
           $lines | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
 
@@ -272,7 +299,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           $body = "Tauri shell run ${{ github.run_id }} on ${{ github.sha }} (typecheck=${{ steps.typecheck.outcome }}, frontend=${{ steps.frontend.outcome }}, check=${{ steps.shellcheck.outcome }}, test=${{ steps.shelltest.outcome }}, build=${{ steps.shellbuild.outcome }})`n`n"
-          foreach ($file in @("typecheck.log", "frontend-build.log", "shell-check.log", "shell-test.log", "shell-build.log")) {
+          foreach ($file in @("typecheck.log", "frontend-build.log", "shell-check.log", "shell-test.log", "shell-build.log", "installer.log")) {
             if (Test-Path $file) {
               $text = Get-Content $file -Raw
               if ($text.Length -gt 30000) { $text = $text.Substring($text.Length - 30000) }
@@ -294,3 +321,5 @@ jobs:
             shell-test.log
             shell-build.log
             target/debug/rusted-shell.exe
+            target/release/bundle/nsis/*setup.exe
+            installer.log

@@ -62,6 +62,7 @@ CREATE TABLE IF NOT EXISTS recent_locations (path TEXT PRIMARY KEY, visited_at I
 CREATE TABLE IF NOT EXISTS recent_files (path TEXT PRIMARY KEY, opened_at INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS sessions (name TEXT PRIMARY KEY, workspace TEXT NOT NULL, updated_at INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS profiles (name TEXT PRIMARY KEY, workspace TEXT NOT NULL, settings TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS starred (path TEXT PRIMARY KEY, starred_at INTEGER NOT NULL);
 "#;
 
 pub struct Database {
@@ -285,6 +286,89 @@ impl Database {
         Ok(paths)
     }
 
+    // ---- stars -----------------------------------------------------------
+
+    /// Marks a path as starred, or clears it. Returns the new state.
+    pub fn toggle_star(&self, path: &Path) -> Result<bool, DbError> {
+        if self.is_starred(path)? {
+            self.connection.execute("DELETE FROM starred WHERE path = ?1", [path.to_string_lossy()])?;
+            Ok(false)
+        } else {
+            self.connection.execute(
+                "INSERT INTO starred(path, starred_at) VALUES(?1, ?2)",
+                params![path.to_string_lossy(), Utc::now().timestamp()],
+            )?;
+            Ok(true)
+        }
+    }
+
+    pub fn set_star(&self, path: &Path, starred: bool) -> Result<(), DbError> {
+        if starred {
+            self.connection.execute(
+                "INSERT OR IGNORE INTO starred(path, starred_at) VALUES(?1, ?2)",
+                params![path.to_string_lossy(), Utc::now().timestamp()],
+            )?;
+        } else {
+            self.forget_star(path)?;
+        }
+        Ok(())
+    }
+
+    pub fn forget_star(&self, path: &Path) -> Result<(), DbError> {
+        self.connection.execute("DELETE FROM starred WHERE path = ?1", [path.to_string_lossy()])?;
+        Ok(())
+    }
+
+    /// Moves a star from an old path to a new one (rename, move). A star on the
+    /// old path is removed; a star already on the new path is preserved.
+    pub fn set_star_target(&self, old: &Path, new: &Path) -> Result<(), DbError> {
+        if !self.is_starred(old)? {
+            return Ok(());
+        }
+        self.connection.execute("DELETE FROM starred WHERE path = ?1", [old.to_string_lossy()])?;
+        self.connection.execute(
+            "INSERT OR IGNORE INTO starred(path, starred_at) VALUES(?1, ?2)",
+            params![new.to_string_lossy(), Utc::now().timestamp()],
+        )?;
+        Ok(())
+    }
+
+    pub fn is_starred(&self, path: &Path) -> Result<bool, DbError> {
+        let found: Option<i64> = self
+            .connection
+            .query_row("SELECT starred_at FROM starred WHERE path = ?1", [path.to_string_lossy()], |row| {
+                row.get(0)
+            })
+            .optional()?;
+        Ok(found.is_some())
+    }
+
+    /// Newest first.
+    pub fn starred_paths(&self) -> Result<Vec<PathBuf>, DbError> {
+        let mut statement =
+            self.connection.prepare("SELECT path FROM starred ORDER BY starred_at DESC")?;
+        let rows = statement.query_map([], |row| Ok(PathBuf::from(row.get::<_, String>(0)?)))?;
+        let mut paths = Vec::new();
+        for row in rows {
+            paths.push(row?);
+        }
+        Ok(paths)
+    }
+
+    /// Drops stars whose file no longer exists, so the Starred view cannot list
+    /// entries the user deleted outside the app.
+    pub fn prune_missing_stars(&self) -> Result<usize, DbError> {
+        let stale: Vec<PathBuf> = self
+            .starred_paths()?
+            .into_iter()
+            .filter(|path| !path.exists())
+            .collect();
+        for path in &stale {
+            self.forget_star(path)?;
+        }
+        Ok(stale.len())
+    }
+
     // ---- sessions and profiles ------------------------------------------
 
     pub fn save_session(&self, name: &str, workspace: &Workspace) -> Result<(), DbError> {
@@ -388,6 +472,31 @@ impl Database {
 mod tests {
     use super::*;
     use rusted_core::ThemeName;
+
+    #[test]
+    fn stars_toggle_persist_and_prune() {
+        let db = Database::in_memory().unwrap();
+        let dir = std::env::temp_dir().join("rusted-star-test");
+        std::fs::create_dir_all(&dir).unwrap();
+        let real = dir.join("keep.txt");
+        std::fs::write(&real, b"x").unwrap();
+        let gone = dir.join("deleted-elsewhere.txt");
+
+        assert!(!db.is_starred(&real).unwrap());
+        assert!(db.toggle_star(&real).unwrap(), "first toggle stars");
+        assert!(db.is_starred(&real).unwrap());
+        assert!(!db.toggle_star(&real).unwrap(), "second toggle unstars");
+        assert!(!db.is_starred(&real).unwrap());
+
+        db.set_star(&real, true).unwrap();
+        db.set_star(&gone, true).unwrap();
+        assert_eq!(db.starred_paths().unwrap().len(), 2);
+
+        // A star for a path that no longer exists is dropped, not reported as valid.
+        assert_eq!(db.prune_missing_stars().unwrap(), 1);
+        assert_eq!(db.starred_paths().unwrap(), vec![real.clone()]);
+        std::fs::remove_dir_all(&dir).ok();
+    }
 
     #[test]
     fn settings_roundtrip_keeps_theme_and_are_sanitized() {

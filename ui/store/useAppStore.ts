@@ -123,10 +123,10 @@ const DEFAULT_FILTERS: SearchFilterState = {
 
 const INITIAL_TAB: TabState = {
   id: 'tab-1',
-  title: 'Documents',
-  path: '/Home/Documents',
-  history: ['/Home', '/Home/Documents'],
-  historyIndex: 1,
+  title: 'Home',
+  path: '/Home',
+  history: ['/Home'],
+  historyIndex: 0,
   viewMode: 'miller',
   selectedIds: [],
   sortField: 'name',
@@ -138,7 +138,10 @@ export const useAppStore = create<AppState>((set, get) => ({
   activeTabId: 'tab-1',
   selectedIds: [],
   activeItem: null,
-  currentPath: '/Home/Documents',
+  // Start at the profile folder. The old mock path "/Home/Documents" resolves
+  // on a real machine too, but Documents can be redirected off the profile
+  // drive, so the app opens Home and lets the user descend.
+  currentPath: '/Home',
   isEditingAddress: false,
   isSidebarOpen: true,
   isInspectorOpen: true,

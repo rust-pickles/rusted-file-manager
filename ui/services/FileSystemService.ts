@@ -506,4 +506,124 @@ class MockFileSystemService implements IFileSystemService {
   }
 }
 
-export const fileSystemService = new MockFileSystemService();
+/**
+ * Real backend, reached over Tauri's IPC bridge.
+ *
+ * Every method maps one-to-one onto a Rust command; the Rust side owns all
+ * filesystem decisions, path validation and persistence. If a command fails the
+ * error propagates so the UI can show it, rather than being swallowed into an
+ * empty list, which would look like an empty folder.
+ */
+class TauriFileSystemService implements IFileSystemService {
+  private async call<T>(command: string, args?: Record<string, unknown>): Promise<T> {
+    const { invoke } = await import('@tauri-apps/api/core');
+    return invoke<T>(command, args);
+  }
+
+  public async listDirectory(path: string, showHidden = false): Promise<FileItem[]> {
+    const listing = await this.call<{ entries: FileItem[] }>('list_directory', {
+      path,
+      showHidden,
+    });
+    return listing.entries;
+  }
+
+  public async getItem(path: string): Promise<FileItem | undefined> {
+    const item = await this.call<FileItem | null>('get_item', { path });
+    return item ?? undefined;
+  }
+
+  public async createFolder(parentPath: string, name: string): Promise<FileItem> {
+    return this.call<FileItem>('create_folder', { parentPath, name });
+  }
+
+  public async createFile(parentPath: string, name: string, content?: string): Promise<FileItem> {
+    return this.call<FileItem>('create_file', { parentPath, name, content: content ?? null });
+  }
+
+  public async renameItem(path: string, newName: string): Promise<FileItem> {
+    return this.call<FileItem>('rename_item', { path, newName });
+  }
+
+  public async deleteItem(path: string, permanent?: boolean): Promise<void> {
+    await this.call<void>('delete_item', { path, permanent: permanent ?? false });
+  }
+
+  /**
+   * Restoring from the Recycle Bin needs the shell's item ids, which the backend
+   * does not expose yet. Rejecting is honest: silently succeeding would tell the
+   * user a file was restored when it was not.
+   */
+  public async restoreFromTrash(_path: string): Promise<void> {
+    throw new Error('Restoring from the Recycle Bin is not supported yet.');
+  }
+
+  public async emptyTrash(): Promise<void> {
+    throw new Error('Emptying the Recycle Bin is not supported yet.');
+  }
+
+  public async copyItems(sources: string[], destFolder: string): Promise<FileItem[]> {
+    return this.call<FileItem[]>('copy_items', { sources, destFolder });
+  }
+
+  public async moveItems(sources: string[], destFolder: string): Promise<FileItem[]> {
+    return this.call<FileItem[]>('move_items', { sources, destFolder });
+  }
+
+  public async duplicateItem(path: string): Promise<FileItem> {
+    return this.call<FileItem>('duplicate_item', { path });
+  }
+
+  public async toggleStarred(path: string): Promise<FileItem> {
+    return this.call<FileItem>('toggle_starred', { path });
+  }
+
+  public async search(query: string, filters?: Partial<SearchFilterState>): Promise<FileItem[]> {
+    const results = await this.call<FileItem[]>('search', {
+      query,
+      root: null,
+      limit: 200,
+    });
+    // Extension and preview-kind filters are cheap to apply here and keep the
+    // backend search generic; size and date filters stay with the caller because
+    // SearchResultsView applies them itself.
+    return results.filter((item) => {
+      if (filters?.extensions && filters.extensions.length > 0) {
+        if (!item.extension || !filters.extensions.includes(item.extension.toLowerCase())) return false;
+      }
+      if (filters?.types && filters.types.length > 0) {
+        if (!item.previewKind || !filters.types.includes(item.previewKind)) return false;
+      }
+      return true;
+    });
+  }
+
+  public async getStorageOverview(): Promise<{
+    drives: DriveInfo[];
+    categories: StorageCategoryBreakdown[];
+  }> {
+    return this.call<{ drives: DriveInfo[]; categories: StorageCategoryBreakdown[] }>(
+      'get_storage_overview',
+    );
+  }
+
+  public async getRecentFiles(limit = 12): Promise<FileItem[]> {
+    return this.call<FileItem[]>('get_recent_files', { limit });
+  }
+
+  public async getStarredItems(): Promise<FileItem[]> {
+    return this.call<FileItem[]>('get_starred_items');
+  }
+}
+
+/**
+ * True when the page is running inside the Tauri webview. The desktop build
+ * always is; `npm run dev` in a plain browser is not, and there the mock keeps
+ * the UI interactive with sample data instead of failing every call.
+ */
+const runningInTauri = (): boolean =>
+  typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
+
+export const fileSystemService: IFileSystemService = runningInTauri()
+  ? new TauriFileSystemService()
+  : new MockFileSystemService();

@@ -112,6 +112,18 @@ pub struct Dimensions {
 }
 
 impl FileItem {
+    /// Applies the persisted star state and the virtual path the UI displays.
+    ///
+    /// Starring lives in the database, not on disk, so a plain `From<FileEntry>`
+    /// cannot know it. The command layer calls this before the item is sent.
+    pub fn with_state(mut self, starred: bool, virtual_path: String, parent_virtual: String) -> Self {
+        self.id = virtual_path.clone();
+        self.path = virtual_path;
+        self.parent_path = parent_virtual;
+        self.is_starred = Some(starred);
+        self
+    }
+
     /// Stable id for a path. The frontend uses `id` as a selection and React key,
     /// so it must not change between two listings of the same folder. The path
     /// itself is the only stable identity available without a database.
@@ -252,6 +264,20 @@ impl ThemeId {
     /// Every theme the CSS knows about, in display order.
     pub const ALL: [Self; 6] =
         [Self::Obsidian, Self::Midnight, Self::Graphite, Self::PureBlack, Self::Snow, Self::WarmSand];
+}
+
+/// Result of listing a folder.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DirectoryListing {
+    /// Virtual path the frontend should treat as the current folder.
+    pub path: String,
+    /// Real path on disk, absent for purely virtual nodes such as the drive list.
+    pub real_path: Option<String>,
+    pub entries: Vec<FileItem>,
+    /// True when the listing was produced from the drive table rather than a
+    /// directory, so the UI can show mounts instead of files.
+    pub is_virtual_root: bool,
 }
 
 /// One row of the asset-protocol allow list as the UI sees it.

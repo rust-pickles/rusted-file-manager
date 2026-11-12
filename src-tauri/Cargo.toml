@@ -35,8 +35,13 @@ serde_json.workspace = true
 thiserror.workspace = true
 chrono.workspace = true
 
-# Backend crates. Only those the DTO layer actually maps are pulled in today;
-# the remaining ones (search, db, archives, storage) are added when their
-# commands land, so the shell never links code it does not expose.
+# Backend crates the shell adapts. Every one of these is reached from a command;
+# none is linked speculatively.
 rusted-core.workspace = true
+rusted-db.workspace = true
 rusted-fs.workspace = true
+rusted-operations.workspace = true
+rusted-storage.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

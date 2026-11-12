@@ -17,3 +17,6 @@ Thumbs.db
 node_modules/
 # Tauri CLI scratch space
 /src-tauri/target
+
+# Built installers (regenerate with build-installer.bat)
+/dist-installer
