@@ -55,7 +55,9 @@ pub fn run() {
                     rusted_db::Database::in_memory().expect("in-memory database")
                 }
             };
-            app.manage(AppState { db });
+            // rusqlite::Connection is Send but not Sync, so the handle is
+            // mutex-wrapped inside AppState; see commands::AppState.
+            app.manage(AppState::new(db));
 
             // The window is created hidden so the webview never paints an empty
             // white frame before React mounts. The frontend calls

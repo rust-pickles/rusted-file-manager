@@ -9,9 +9,26 @@ use crate::dto::{AppInfo, AssetRoot, DirectoryListing, DriveDto, FileItem, FileT
 use crate::paths::{self, Location};
 use tauri::State;
 
-/// Shared application state: the persistence handle and the asset-scope guard.
+/// Shared application state.
+///
+/// The database handle is behind a `Mutex` because `rusqlite::Connection` is
+/// `Send` but not `Sync`: Tauri requires managed state to be both, so without
+/// this the commands do not satisfy `CommandArg` at all. A poisoned lock is
+/// recovered rather than panicking, because losing a star update must not take
+/// the whole window down.
 pub struct AppState {
-    pub db: rusted_db::Database,
+    db: std::sync::Mutex<rusted_db::Database>,
+}
+
+impl AppState {
+    pub fn new(db: rusted_db::Database) -> Self {
+        Self { db: std::sync::Mutex::new(db) }
+    }
+
+    /// Locks the database, recovering from a poisoned mutex.
+    fn db(&self) -> std::sync::MutexGuard<'_, rusted_db::Database> {
+        self.db.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
 }
 
 /// An error returned to the webview. Kept as a plain string because the UI shows
@@ -90,8 +107,8 @@ pub fn list_directory(state: State<'_, AppState>, path: String, show_hidden: boo
     }
 
     let virtual_path = paths::to_virtual(&real);
-    let _ = state.db.visit(&real);
-    let starred = state.db.starred_paths().unwrap_or_default();
+    let _ = state.db().visit(&real);
+    let starred = state.db().starred_paths().unwrap_or_default();
 
     let entries = rusted_fs::read_directory(&real, show_hidden, Default::default())
         .map_err(|error| CommandError { message: error.to_string() })?
@@ -154,7 +171,7 @@ pub fn get_item(state: State<'_, AppState>, path: String) -> Result<Option<FileI
     let entry = rusted_fs::entry_from_metadata(&real, &metadata, file_type);
     let virtual_path = paths::to_virtual(&real);
     let parent = paths::to_virtual(real.parent().unwrap_or(&real));
-    let starred = state.db.is_starred(&real).unwrap_or(false);
+    let starred = state.db().is_starred(&real).unwrap_or(false);
     let item: FileItem = entry.into();
     Ok(Some(item.with_state(starred, virtual_path, parent)))
 }
@@ -217,9 +234,12 @@ pub fn rename_item(state: State<'_, AppState>, path: String, new_name: String) -
     }
     std::fs::rename(rusted_fs::long_path(&source), rusted_fs::long_path(&target))
         .map_err(|error| CommandError { message: format!("could not rename: {error}") })?;
-    // The star and the recent entry follow the file, not its old name.
-    if state.db.is_starred(&source).unwrap_or(false) {
-        let _ = state.db.set_star_target(&source, &target);
+    // The star follows the file, not its old name. The flag is read into a local
+    // first: `std::sync::Mutex` is not reentrant, so locking twice with a guard
+    // still alive would deadlock the command thread.
+    let was_starred = state.db().is_starred(&source).unwrap_or(false);
+    if was_starred {
+        let _ = state.db().set_star_target(&source, &target);
     }
     item_for(&state, &target)
 }
@@ -236,12 +256,12 @@ pub fn delete_item(state: State<'_, AppState>, path: String, permanent: Option<b
         rusted_operations::delete_permanent(&target, true)
             .map_err(|error| CommandError { message: error.to_string() })?;
     } else {
-        rusted_operations::recycle([&target])
+        rusted_operations::recycle(&[&target])
             .map_err(|error| CommandError { message: format!("could not move to the Recycle Bin: {error}") })?;
     }
     // A deleted item must not keep a star or a recent entry pointing at nothing.
-    let _ = state.db.forget_star(&target);
-    let _ = state.db.forget_recent(&target);
+    let _ = state.db().forget_star(&target);
+    let _ = state.db().forget_recent(&target);
     Ok(())
 }
 
@@ -276,7 +296,7 @@ pub fn duplicate_item(state: State<'_, AppState>, path: String) -> Result<FileIt
 pub fn toggle_starred(state: State<'_, AppState>, path: String) -> Result<FileItem> {
     let real = paths::to_real(&path).ok_or_else(|| CommandError { message: format!("'{path}' is not a location") })?;
     state
-        .db
+        .db()
         .toggle_star(&real)
         .map_err(|error| CommandError { message: error.to_string() })?;
     item_for(&state, &real)
@@ -302,7 +322,7 @@ pub fn search(
         _ => paths::home_directory().ok_or_else(|| CommandError { message: "no folder to search".into() })?,
     };
     let budget = limit.unwrap_or(200).clamp(1, 2000);
-    let starred = state.db.starred_paths().unwrap_or_default();
+    let starred = state.db().starred_paths().unwrap_or_default();
     let mut hits = Vec::new();
     let mut stack = vec![start.clone()];
     let mut visited = 0usize;
@@ -358,7 +378,7 @@ pub fn search(
 pub async fn get_storage_overview() -> Result<StorageOverview> {
     tauri::async_runtime::spawn_blocking(measure_storage)
         .await
-        .map_err(|error| CommandError { message: format!("storage scan failed: {error}") })
+        .map_err(|error| CommandError { message: format!("storage scan failed: {error}") })?
 }
 
 fn measure_storage() -> Result<StorageOverview> {
@@ -399,7 +419,7 @@ fn measure_storage() -> Result<StorageOverview> {
 /// Files the user opened most recently, newest first.
 #[tauri::command]
 pub fn get_recent_files(state: State<'_, AppState>, limit: Option<usize>) -> Result<Vec<FileItem>> {
-    let paths = state.db.recent_files(limit.unwrap_or(24)).unwrap_or_default();
+    let paths = state.db().recent_files(limit.unwrap_or(24)).unwrap_or_default();
     Ok(items_for_paths(&state, &paths))
 }
 
@@ -407,8 +427,8 @@ pub fn get_recent_files(state: State<'_, AppState>, limit: Option<usize>) -> Res
 #[tauri::command]
 pub fn get_starred_items(state: State<'_, AppState>) -> Result<Vec<FileItem>> {
     // Drop stars for files that vanished outside the app before reporting them.
-    let _ = state.db.prune_missing_stars();
-    let paths = state.db.starred_paths().unwrap_or_default();
+    let _ = state.db().prune_missing_stars();
+    let paths = state.db().starred_paths().unwrap_or_default();
     Ok(items_for_paths(&state, &paths))
 }
 
@@ -416,7 +436,7 @@ pub fn get_starred_items(state: State<'_, AppState>) -> Result<Vec<FileItem>> {
 #[tauri::command]
 pub fn note_opened(state: State<'_, AppState>, path: String) -> Result<()> {
     if let Some(real) = paths::to_real(&path) {
-        let _ = state.db.opened_file(&real);
+        let _ = state.db().opened_file(&real);
     }
     Ok(())
 }
@@ -467,7 +487,7 @@ fn item_for(state: &AppState, real: &std::path::Path) -> Result<FileItem> {
     let entry = rusted_fs::entry_from_metadata(real, &metadata, file_type);
     let virtual_path = paths::to_virtual(real);
     let parent = paths::to_virtual(real.parent().unwrap_or(real));
-    let starred = state.db.is_starred(real).unwrap_or(false);
+    let starred = state.db().is_starred(real).unwrap_or(false);
     let item: FileItem = entry.into();
     Ok(item.with_state(starred, virtual_path, parent))
 }
@@ -501,8 +521,9 @@ fn transfer(state: &AppState, sources: &[String], dest_folder: &str, move_it: bo
         };
         let placed = result.map_err(|error| CommandError { message: error.to_string() })?;
         if let Some(placed) = placed {
-            if move_it && state.db.is_starred(&real).unwrap_or(false) {
-                let _ = state.db.set_star_target(&real, &placed);
+            let was_starred = move_it && state.db().is_starred(&real).unwrap_or(false);
+            if was_starred {
+                let _ = state.db().set_star_target(&real, &placed);
             }
             if let Ok(item) = item_for(state, &placed) {
                 created.push(item);
