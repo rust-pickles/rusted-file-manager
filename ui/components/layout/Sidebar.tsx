@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   Home,
   Clock,
@@ -19,9 +19,11 @@ import {
   PanelLeft,
   Pin,
   PinOff,
+  Folder,
 } from 'lucide-react';
 import { useAppStore } from '../../store/useAppStore';
 import { INITIAL_DRIVES } from '../../services/mockData';
+import { fileSystemService, QuickAccessEntry } from '../../services/FileSystemService';
 import { formatBytes } from '../../utils/formatters';
 
 export const Sidebar: React.FC = () => {
@@ -41,10 +43,49 @@ export const Sidebar: React.FC = () => {
     additional: false,
   });
 
-  const [pinnedPaths, setPinnedPaths] = useState<string[]>([
-    '/Home/Documents/Projects/Atlas-Desktop',
-    '/Home/Pictures/Wallpapers',
-  ]);
+  // Pinned shortcuts used to be two invented paths from a mock dataset, so they
+  // pointed at folders that do not exist. They start empty and only hold what
+  // the user actually pins.
+  const [pinnedPaths, setPinnedPaths] = useState<string[]>([]);
+
+  // Which known folders exist here. The backend resolves them through the shell,
+  // so a Pictures folder that OneDrive relocated is reported at its real
+  // location instead of being offered as the leftover stub under the profile.
+  const [quickAccess, setQuickAccess] = useState<QuickAccessEntry[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    fileSystemService
+      .getQuickAccess()
+      .then((entries) => {
+        if (!cancelled) setQuickAccess(entries);
+      })
+      .catch(() => {
+        if (!cancelled) setQuickAccess([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  /** Icon per known folder; anything unrecognised gets a plain folder icon. */
+  const iconFor = (name: string) => {
+    switch (name.toLowerCase()) {
+      case 'desktop':
+        return Monitor;
+      case 'downloads':
+        return Download;
+      case 'documents':
+        return FileText;
+      case 'pictures':
+        return Image;
+      case 'videos':
+        return Video;
+      case 'music':
+        return Music;
+      default:
+        return Folder;
+    }
+  };
 
   const toggleSection = (section: string) => {
     setCollapsedSections((prev) => ({ ...prev, [section]: !prev[section] }));
@@ -232,20 +273,14 @@ export const Sidebar: React.FC = () => {
 
           {!collapsedSections.quickAccess && (
             <div className="mt-1 space-y-0.5">
-              {[
-                { label: 'Desktop', path: '/Home/Desktop', icon: Monitor },
-                { label: 'Downloads', path: '/Home/Downloads', icon: Download },
-                { label: 'Documents', path: '/Home/Documents', icon: FileText },
-                { label: 'Pictures', path: '/Home/Pictures', icon: Image },
-                { label: 'Videos', path: '/Home/Videos', icon: Video },
-                { label: 'Music', path: '/Home/Music', icon: Music },
-              ].map((item) => {
-                const Icon = item.icon;
-                const active = isCurrent(item.path);
+              {quickAccess.map((item) => {
+                const Icon = iconFor(item.name);
+                const active = isCurrent(item.virtualPath);
                 return (
                   <button
-                    key={item.path}
-                    onClick={() => handleNav(item.path)}
+                    key={item.virtualPath}
+                    title={item.realPath}
+                    onClick={() => handleNav(item.virtualPath)}
                     className={`group w-full flex items-center gap-2.5 px-2.5 py-1.5 rounded-[10px] transition-colors text-left border ${
                       active
                         ? 'bg-[var(--bg-surface)] border-[var(--border-strong)] text-[var(--text-primary)] font-medium shadow-2xs'
@@ -253,7 +288,7 @@ export const Sidebar: React.FC = () => {
                     }`}
                   >
                     <Icon className="w-3.5 h-3.5 shrink-0 opacity-80 group-hover:opacity-100" />
-                    <span className="truncate flex-1">{item.label}</span>
+                    <span className="truncate flex-1">{item.name}</span>
                   </button>
                 );
               })}

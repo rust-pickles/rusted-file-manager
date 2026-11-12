@@ -239,6 +239,35 @@ pub fn normalize(path: &Path) -> PathBuf {
     out
 }
 
+/// One sidebar entry: the virtual path the UI navigates to, and its label.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct QuickAccess {
+    pub name: String,
+    pub virtual_path: String,
+    pub real_path: String,
+}
+
+/// The known folders that exist here, in sidebar order.
+///
+/// Resolution is delegated to `KnownFolder::path`, which asks the shell, so a
+/// redirected folder is reported with its real location rather than a guess.
+pub fn quick_access() -> Vec<QuickAccess> {
+    let mut entries = Vec::new();
+    for (name, folder) in HOME_FOLDERS.iter() {
+        if *folder == rusted_fs::KnownFolder::Home {
+            continue;
+        }
+        if let Some(real) = folder.path() {
+            entries.push(QuickAccess {
+                name: (*name).to_string(),
+                virtual_path: format!("{VIRTUAL_HOME}/{name}"),
+                real_path: real.to_string_lossy().into_owned(),
+            });
+        }
+    }
+    entries
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

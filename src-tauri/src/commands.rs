@@ -166,6 +166,17 @@ pub fn read_clipboard_paths() -> Vec<String> {
     }
 }
 
+/// Which `/Home` entries actually exist for this user, as virtual paths.
+///
+/// The sidebar used to render all seven unconditionally, so on a machine where
+/// OneDrive owns Pictures or Videos the entry pointed at a stub and opened the
+/// wrong folder. Reporting the resolved set lets the UI show only real entries,
+/// and because resolution goes through the shell the path is the redirected one.
+#[tauri::command]
+pub fn quick_access_entries() -> Vec<paths::QuickAccess> {
+    paths::quick_access()
+}
+
 /// Returns build metadata and the theme list the frontend needs to render.
 #[tauri::command]
 pub fn app_info() -> AppInfo {

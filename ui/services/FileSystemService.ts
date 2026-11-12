@@ -7,6 +7,16 @@ import {
 } from '../types/filesystem';
 import { INITIAL_FILES, INITIAL_DRIVES } from './mockData';
 
+/**
+ * One sidebar entry. `realPath` is where the folder actually lives, which is not
+ * always `<profile>\\<name>`: OneDrive relocates several of them.
+ */
+export interface QuickAccessEntry {
+  name: string;
+  virtualPath: string;
+  realPath: string;
+}
+
 export interface IFileSystemService {
   listDirectory(path: string, showHidden?: boolean): Promise<FileItem[]>;
   getItem(path: string): Promise<FileItem | undefined>;
@@ -32,6 +42,8 @@ export interface IFileSystemService {
   copyPathsToClipboard(paths: string[]): Promise<void>;
   /** Reads the files currently on the system clipboard, as virtual paths. */
   readClipboardPaths(): Promise<string[]>;
+  /** Known folders that exist for this user, for the sidebar. */
+  getQuickAccess(): Promise<QuickAccessEntry[]>;
 }
 
 class MockFileSystemService implements IFileSystemService {
@@ -531,6 +543,15 @@ class MockFileSystemService implements IFileSystemService {
   public async readClipboardPaths(): Promise<string[]> {
     return [];
   }
+
+  /** Fixed list for the browser preview, where no real folders exist. */
+  public async getQuickAccess(): Promise<QuickAccessEntry[]> {
+    return ['Desktop', 'Downloads', 'Documents', 'Pictures', 'Videos', 'Music'].map((name) => ({
+      name,
+      virtualPath: `/Home/${name}`,
+      realPath: `/Home/${name}`,
+    }));
+  }
 }
 
 /**
@@ -657,6 +678,10 @@ class TauriFileSystemService implements IFileSystemService {
 
   public async readClipboardPaths(): Promise<string[]> {
     return this.call<string[]>('read_clipboard_paths');
+  }
+
+  public async getQuickAccess(): Promise<QuickAccessEntry[]> {
+    return this.call<QuickAccessEntry[]>('quick_access_entries');
   }
 }
 
