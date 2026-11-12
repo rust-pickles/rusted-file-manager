@@ -66,8 +66,9 @@ pub fn open_path(path: String) -> Result<()> {
         const CREATE_NO_WINDOW: u32 = 0x0800_0000;
         // The empty title argument is required: `start` treats the first quoted
         // argument as the window title, so a path with spaces would be eaten.
+        let target = real.to_string_lossy().into_owned();
         std::process::Command::new("cmd")
-            .args(["/C", "start", "", &real.to_string_lossy()])
+            .args(["/C", "start", "", target.as_str()])
             .creation_flags(CREATE_NO_WINDOW)
             .spawn()
             .map_err(|error| CommandError { message: format!("could not open '{}': {error}", real.display()) })?;
@@ -94,8 +95,11 @@ pub fn reveal_path(path: String) -> Result<()> {
         use std::os::windows::process::CommandExt;
         const CREATE_NO_WINDOW: u32 = 0x0800_0000;
         // /select, needs the comma glued to it and the path passed separately.
+        // explorer.exe parses its own command line, so the path is quoted by
+        // hand: Command's escaping would mangle a path ending in a separator.
+        let selection = format!("/select,\"{}\"", real.display());
         std::process::Command::new("explorer")
-            .raw_arg(format!("/select,\"{}\"", real.display()))
+            .raw_arg(selection)
             .creation_flags(CREATE_NO_WINDOW)
             .spawn()
             .map_err(|error| CommandError { message: format!("could not reveal '{}': {error}", real.display()) })?;
