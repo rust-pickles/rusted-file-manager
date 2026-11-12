@@ -192,6 +192,20 @@ pub struct DriveDto {
     pub icon_type: DriveIconType,
 }
 
+/// One row of the "what is taking space" list.
+///
+/// `truncated` is true when the scan stopped at its safety limit, so the UI can
+/// label the size as a lower bound instead of presenting it as exact.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FolderUsageRow {
+    pub name: String,
+    pub path: String,
+    pub bytes: u64,
+    pub file_count: u64,
+    pub truncated: bool,
+}
+
 /// Filesystem health for one drive, as reported to the Storage view.
 ///
 /// `writable` comes from a real write probe, not from permissions, so a volume

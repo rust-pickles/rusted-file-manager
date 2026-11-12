@@ -22,8 +22,8 @@ import {
   Folder,
 } from 'lucide-react';
 import { useAppStore } from '../../store/useAppStore';
-import { INITIAL_DRIVES } from '../../services/mockData';
 import { fileSystemService, QuickAccessEntry } from '../../services/FileSystemService';
+import { DriveInfo } from '../../types/filesystem';
 import { formatBytes } from '../../utils/formatters';
 
 export const Sidebar: React.FC = () => {
@@ -52,6 +52,26 @@ export const Sidebar: React.FC = () => {
   // so a Pictures folder that OneDrive relocated is reported at its real
   // location instead of being offered as the leftover stub under the profile.
   const [quickAccess, setQuickAccess] = useState<QuickAccessEntry[]>([]);
+
+  // Drives were rendered from INITIAL_DRIVES in mockData, which is sample data
+  // for the browser preview: the letters, labels and capacities on screen were
+  // invented. They come from the backend now, and capacity is read from cached
+  // volume metadata so this paints immediately.
+  const [drives, setDrives] = useState<DriveInfo[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    fileSystemService
+      .listDrives()
+      .then((found) => {
+        if (!cancelled) setDrives(found);
+      })
+      .catch(() => {
+        if (!cancelled) setDrives([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
   useEffect(() => {
     let cancelled = false;
     fileSystemService
@@ -350,14 +370,20 @@ export const Sidebar: React.FC = () => {
 
           {!collapsedSections.storage && (
             <div className="mt-1 space-y-1.5">
-              {INITIAL_DRIVES.map((drive) => {
-                const usedPct = Math.round((drive.usedBytes / drive.totalBytes) * 100);
+              {drives.map((drive) => {
+                // A drive with no readable capacity must not divide by zero and
+                // claim 100% used, which is what a bare Math.round would do.
+                const usedPct =
+                  drive.totalBytes > 0
+                    ? Math.round((drive.usedBytes / drive.totalBytes) * 100)
+                    : 0;
                 return (
                   <button
                     key={drive.id}
-                    onClick={() => handleNav('/Home/Storage')}
+                    title={`${drive.mountPoint} (${drive.fileSystem})`}
+                    onClick={() => handleNav(drive.mountPoint)}
                     className={`w-full p-2.5 rounded-[12px] transition-colors text-left border ${
-                      currentPath === '/Home/Storage'
+                      currentPath === drive.mountPoint
                         ? 'bg-[var(--bg-surface)] border-[var(--border-strong)] shadow-2xs'
                         : 'bg-[var(--bg-surface-secondary)] border-[var(--border-subtle)] hover:bg-[var(--bg-surface)]'
                     }`}

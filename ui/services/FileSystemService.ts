@@ -44,6 +44,34 @@ export interface IFileSystemService {
   readClipboardPaths(): Promise<string[]>;
   /** Known folders that exist for this user, for the sidebar. */
   getQuickAccess(): Promise<QuickAccessEntry[]>;
+  /** Drives with capacity only. Reads cached metadata, so it is instant. */
+  listDrives(): Promise<DriveInfo[]>;
+  /** Free bytes used per top-level folder under a root, for the storage view. */
+  getFolderUsage(root: string): Promise<FolderUsage[]>;
+  /** Per-drive filesystem health, including a real writability probe. */
+  getDriveHealth(): Promise<DriveHealthEntry[]>;
+  /** Closes, minimises or maximises the desktop window. */
+  windowAction(action: 'close' | 'minimize' | 'maximize'): Promise<void>;
+}
+
+/** One row of "what is taking space" for a drive. */
+export interface FolderUsage {
+  name: string;
+  path: string;
+  bytes: number;
+  fileCount: number;
+  /** True when the walk stopped at its safety limit, so `bytes` is a lower bound. */
+  truncated: boolean;
+}
+
+/** Result of the per-drive health probe. */
+export interface DriveHealthEntry {
+  name: string;
+  root: string;
+  total: number | null;
+  free: number | null;
+  writable: boolean;
+  problem: string | null;
 }
 
 class MockFileSystemService implements IFileSystemService {
@@ -544,6 +572,23 @@ class MockFileSystemService implements IFileSystemService {
     return [];
   }
 
+  public async listDrives(): Promise<DriveInfo[]> {
+    // The preview has no disks. The fixture exists only so the layout can be
+    // inspected in a browser; the desktop build always uses the backend.
+    return [];
+  }
+
+  public async getFolderUsage(_root: string): Promise<FolderUsage[]> {
+    return [];
+  }
+
+  public async getDriveHealth(): Promise<DriveHealthEntry[]> {
+    return [];
+  }
+
+  /** A browser tab cannot control a window; this is a no-op there. */
+  public async windowAction(_action: 'close' | 'minimize' | 'maximize'): Promise<void> {}
+
   /** Fixed list for the browser preview, where no real folders exist. */
   public async getQuickAccess(): Promise<QuickAccessEntry[]> {
     return ['Desktop', 'Downloads', 'Documents', 'Pictures', 'Videos', 'Music'].map((name) => ({
@@ -682,6 +727,27 @@ class TauriFileSystemService implements IFileSystemService {
 
   public async getQuickAccess(): Promise<QuickAccessEntry[]> {
     return this.call<QuickAccessEntry[]>('quick_access_entries');
+  }
+
+  public async listDrives(): Promise<DriveInfo[]> {
+    return this.call<DriveInfo[]>('list_drives');
+  }
+
+  public async getFolderUsage(root: string): Promise<FolderUsage[]> {
+    return this.call<FolderUsage[]>('folder_usage', { root });
+  }
+
+  public async getDriveHealth(): Promise<DriveHealthEntry[]> {
+    return this.call<DriveHealthEntry[]>('drive_health_report');
+  }
+
+  public async windowAction(action: 'close' | 'minimize' | 'maximize'): Promise<void> {
+    const api = await import('@tauri-apps/api/window');
+    const current = api.getCurrentWindow();
+    if (action === 'close') await current.close();
+    else if (action === 'minimize') await current.minimize();
+    else if (await current.isMaximized()) await current.unmaximize();
+    else await current.maximize();
   }
 }
 

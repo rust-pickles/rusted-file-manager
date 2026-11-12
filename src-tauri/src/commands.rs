@@ -5,7 +5,10 @@
 //! No command implements filesystem logic itself; it resolves a path, calls the
 //! backend crate, and maps the result.
 
-use crate::dto::{AppInfo, AssetRoot, DirectoryListing, DriveDto, DriveHealthDto, FileItem, FileType, ThemeId};
+use crate::dto::{
+    AppInfo, AssetRoot, DirectoryListing, DriveDto, DriveHealthDto, FileItem, FileType,
+    FolderUsageRow, ThemeId,
+};
 use crate::paths::{self, Location};
 use tauri::State;
 
@@ -225,6 +228,93 @@ pub async fn drive_health_report() -> Result<Vec<DriveHealthDto>> {
     })
     .await
     .map_err(|error| CommandError { message: format!("drive health check failed: {error}") })
+}
+
+/// Bytes and file counts per top-level folder under `root`.
+///
+/// Deliberately one level deep plus a bounded walk inside each child, which is
+/// what makes it fast: a full recursive scan of a 500 GB drive takes minutes,
+/// and the Storage view only needs to answer "which folders are big". Anything
+/// past `MAX_FILES_PER_FOLDER` stops counting, and the row is marked so the UI
+/// can say the number is a lower bound instead of pretending it is exact.
+#[tauri::command]
+pub async fn folder_usage(root: String) -> Result<Vec<FolderUsageRow>> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let real = paths::to_real(&root)
+            .ok_or_else(|| CommandError { message: format!("'{root}' is not a location") })?;
+        if !real.is_dir() {
+            return Err(CommandError { message: format!("'{}' is not a folder", real.display()) });
+        }
+
+        const MAX_FILES_PER_FOLDER: usize = 200_000;
+        let mut rows: Vec<FolderUsageRow> = Vec::new();
+
+        let entries = std::fs::read_dir(&real)
+            .map_err(|error| CommandError { message: format!("cannot read '{}': {error}", real.display()) })?;
+
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let is_dir = entry.file_type().map(|kind| kind.is_dir()).unwrap_or(false);
+            if !is_dir {
+                // Loose files at the root are grouped so the totals still add up.
+                if let Ok(meta) = entry.metadata() {
+                    let name = entry.file_name().to_string_lossy().into_owned();
+                    rows.push(FolderUsageRow {
+                        name,
+                        path: paths::to_virtual(&path),
+                        bytes: meta.len(),
+                        file_count: 1,
+                        truncated: false,
+                    });
+                }
+                continue;
+            }
+
+            let mut bytes: u64 = 0;
+            let mut file_count: u64 = 0;
+            let mut truncated = false;
+            // A bounded, iterative walk: no recursion depth surprises, and it can
+            // stop early. Links are not followed, so a junction cannot loop.
+            let mut stack = vec![path.clone()];
+            while let Some(current) = stack.pop() {
+                let Ok(listing) = std::fs::read_dir(&current) else { continue };
+                for child in listing.flatten() {
+                    let Ok(kind) = child.file_type() else { continue };
+                    if kind.is_dir() {
+                        stack.push(child.path());
+                        continue;
+                    }
+                    if let Ok(meta) = child.metadata() {
+                        bytes += meta.len();
+                        file_count += 1;
+                        if file_count as usize >= MAX_FILES_PER_FOLDER {
+                            truncated = true;
+                            break;
+                        }
+                    }
+                }
+                if truncated {
+                    break;
+                }
+            }
+
+            let name = entry.file_name().to_string_lossy().into_owned();
+            rows.push(FolderUsageRow {
+                path: paths::to_virtual(&path),
+                name,
+                bytes,
+                file_count,
+                truncated,
+            });
+        }
+
+        // Largest first: the question this answers is "what is eating the drive".
+        rows.sort_by(|a, b| b.bytes.cmp(&a.bytes));
+        rows.truncate(40);
+        Ok(rows)
+    })
+    .await
+    .map_err(|error| CommandError { message: format!("folder scan failed: {error}") })?
 }
 
 /// Returns build metadata and the theme list the frontend needs to render.

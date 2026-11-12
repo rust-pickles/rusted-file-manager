@@ -32,6 +32,7 @@ export default function App() {
     closeTab,
     goBack,
     goForward,
+    refreshTab,
     setViewMode,
     toggleSidebar,
     toggleInspector,
@@ -101,6 +102,13 @@ export default function App() {
       if (mod && e.key.toLowerCase() === 'l') {
         e.preventDefault();
         setIsEditingAddress(true);
+        return;
+      }
+
+      // The Refresh button advertised Ctrl+R but nothing handled it.
+      if (mod && e.key.toLowerCase() === 'r') {
+        e.preventDefault();
+        refreshTab();
         return;
       }
 
@@ -221,6 +229,7 @@ export default function App() {
     setViewMode,
     goBack,
     goForward,
+    refreshTab,
     selectAll,
     copySelection,
     cutSelection,

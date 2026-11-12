@@ -51,6 +51,7 @@ pub fn run() {
             commands::quick_access_entries,
             commands::list_drives,
             commands::drive_health_report,
+            commands::folder_usage,
         ])
         .setup(|app| {
             // Persistence lives next to the OS's per-user app data. If the

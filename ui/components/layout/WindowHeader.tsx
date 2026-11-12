@@ -10,6 +10,8 @@ import {
 import { useAppStore } from '../../store/useAppStore';
 import { BrandIcon } from '../common/BrandIcon';
 
+import { fileSystemService } from '../../services/FileSystemService';
+
 export const WindowHeader: React.FC = () => {
   const {
     tabs,
@@ -37,20 +39,28 @@ export const WindowHeader: React.FC = () => {
       {/* Left: Window Dots & RUSTED Geometric Brand */}
       <div className="flex items-center gap-3.5 shrink-0">
         <div className="flex items-center gap-1.5 mr-1 group">
+          {/* These three used to be pictures of buttons: no handler at all, so
+              clicking close did nothing. They drive the real window now. */}
           <button
+            onClick={() => fileSystemService.windowAction('close')}
             aria-label="Close window"
+            title="Close"
             className="w-3 h-3 rounded-full bg-rose-500/80 hover:bg-rose-500 transition-colors flex items-center justify-center text-[8px] text-rose-950 opacity-80 hover:opacity-100"
           >
             <span className="opacity-0 group-hover:opacity-100">×</span>
           </button>
           <button
+            onClick={() => fileSystemService.windowAction('minimize')}
             aria-label="Minimize window"
+            title="Minimize"
             className="w-3 h-3 rounded-full bg-amber-500/80 hover:bg-amber-500 transition-colors flex items-center justify-center text-[8px] text-amber-950 opacity-80 hover:opacity-100"
           >
             <span className="opacity-0 group-hover:opacity-100">–</span>
           </button>
           <button
+            onClick={() => fileSystemService.windowAction('maximize')}
             aria-label="Maximize window"
+            title="Maximize or restore"
             className="w-3 h-3 rounded-full bg-emerald-500/80 hover:bg-emerald-500 transition-colors flex items-center justify-center text-[8px] text-emerald-950 opacity-80 hover:opacity-100"
           >
             <span className="opacity-0 group-hover:opacity-100">+</span>
