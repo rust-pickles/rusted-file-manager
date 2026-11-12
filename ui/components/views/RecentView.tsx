@@ -5,6 +5,8 @@ import { fileSystemService } from '../../services/FileSystemService';
 import { FileItem } from '../../types/filesystem';
 import { getFileIcon, formatBytes, formatDate } from '../../utils/formatters';
 
+import { openItem } from '../../services/openItem';
+
 export const RecentView: React.FC = () => {
   const { navigateTab, activeTabId, selectItem, setActiveItem, openContextMenu } = useAppStore();
   const [files, setFiles] = useState<FileItem[]>([]);
@@ -26,10 +28,11 @@ export const RecentView: React.FC = () => {
     return true;
   });
 
-  const handleOpen = (item: FileItem) => {
-    selectItem(item.id, false);
-    setActiveItem(item);
-    navigateTab(activeTabId, item.parentPath);
+  const handleOpen = async (item: FileItem) => {
+    // This used to navigate to the item's parent folder and stop, so clicking a
+    // recent file jumped the view somewhere else without opening anything.
+    const failure = await openItem(item, (path) => navigateTab(activeTabId, path));
+    if (failure) window.alert(failure);
   };
 
   return (

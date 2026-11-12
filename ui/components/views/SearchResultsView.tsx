@@ -5,6 +5,8 @@ import { fileSystemService } from '../../services/FileSystemService';
 import { FileItem, PreviewKind } from '../../types/filesystem';
 import { getFileIcon, formatBytes, formatDate } from '../../utils/formatters';
 
+import { openItem } from '../../services/openItem';
+
 export const SearchResultsView: React.FC = () => {
   const {
     searchQuery,
@@ -40,14 +42,10 @@ export const SearchResultsView: React.FC = () => {
     };
   }, [searchQuery, searchFilters]);
 
-  const handleOpen = (item: FileItem) => {
-    if (item.type === 'folder') {
-      navigateTab(activeTabId, item.path);
-    } else {
-      selectItem(item.id, false);
-      setActiveItem(item);
-      navigateTab(activeTabId, item.parentPath);
-    }
+  const handleOpen = async (item: FileItem) => {
+    // Opening a search result must open it, not dump the user in its folder.
+    const failure = await openItem(item, (path) => navigateTab(activeTabId, path));
+    if (failure) window.alert(failure);
   };
 
   const toggleTypeFilter = (kind: PreviewKind) => {

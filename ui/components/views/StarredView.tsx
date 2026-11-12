@@ -5,6 +5,8 @@ import { fileSystemService } from '../../services/FileSystemService';
 import { FileItem } from '../../types/filesystem';
 import { getFileIcon, formatBytes } from '../../utils/formatters';
 
+import { openItem } from '../../services/openItem';
+
 export const StarredView: React.FC = () => {
   const { navigateTab, activeTabId, selectItem, setActiveItem, openContextMenu } = useAppStore();
   const [items, setItems] = useState<FileItem[]>([]);
@@ -17,14 +19,9 @@ export const StarredView: React.FC = () => {
     load();
   }, []);
 
-  const handleOpen = (item: FileItem) => {
-    if (item.type === 'folder') {
-      navigateTab(activeTabId, item.path);
-    } else {
-      selectItem(item.id, false);
-      setActiveItem(item);
-      navigateTab(activeTabId, item.parentPath);
-    }
+  const handleOpen = async (item: FileItem) => {
+    const failure = await openItem(item, (path) => navigateTab(activeTabId, path));
+    if (failure) window.alert(failure);
   };
 
   const handleUnstar = async (e: React.MouseEvent, item: FileItem) => {

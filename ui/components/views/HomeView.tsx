@@ -17,6 +17,8 @@ import { FileItem, DriveInfo } from '../../types/filesystem';
 import { getFileIcon, formatBytes } from '../../utils/formatters';
 import { BrandIcon } from '../common/BrandIcon';
 
+import { openItem } from '../../services/openItem';
+
 export const HomeView: React.FC = () => {
   const { navigateTab, activeTabId, selectItem, setActiveItem } = useAppStore();
   const [recentFiles, setRecentFiles] = useState<FileItem[]>([]);
@@ -24,24 +26,35 @@ export const HomeView: React.FC = () => {
   const [drives, setDrives] = useState<DriveInfo[]>([]);
 
   useEffect(() => {
+    let cancelled = false;
     async function loadData() {
-      const recents = await fileSystemService.getRecentFiles(8);
-      const starred = await fileSystemService.getStarredItems();
-      const overview = await fileSystemService.getStorageOverview();
-      setRecentFiles(recents);
-      setStarredItems(starred);
-      setDrives(overview.drives);
+      // Drives come from the fast path first: `getStorageOverview` walks the
+      // home folder to classify file categories, which is wasted work for a home
+      // screen that only needs capacity. This is what made Home feel sluggish.
+      const [drivesResult, recentsResult, starredResult] = await Promise.allSettled([
+        fileSystemService.listDrives(),
+        fileSystemService.getRecentFiles(8),
+        fileSystemService.getStarredItems(),
+      ]);
+      if (cancelled) return;
+      if (drivesResult.status === 'fulfilled') setDrives(drivesResult.value);
+      if (recentsResult.status === 'fulfilled') setRecentFiles(recentsResult.value);
+      if (starredResult.status === 'fulfilled') setStarredItems(starredResult.value);
     }
     loadData();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
-  const handleOpenItem = (item: FileItem) => {
+  const handleOpenItem = async (item: FileItem) => {
     if (item.type === 'folder') {
       navigateTab(activeTabId, item.path);
     } else {
-      selectItem(item.id, false);
-      setActiveItem(item);
-      navigateTab(activeTabId, item.parentPath);
+      // Selecting and jumping to the parent folder was all this did, so a click
+      // on a recent file navigated away without opening anything.
+      const failure = await openItem(item, (path) => navigateTab(activeTabId, path));
+      if (failure) window.alert(failure);
     }
   };
 
@@ -193,7 +206,7 @@ export const HomeView: React.FC = () => {
           <h3 className="font-semibold text-[var(--text-primary)] mb-3">Storage Devices</h3>
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             {drives.map((d) => {
-              const pct = Math.round((d.usedBytes / d.totalBytes) * 100);
+              const pct = d.totalBytes > 0 ? Math.round((d.usedBytes / d.totalBytes) * 100) : 0;
               return (
                 <div
                   key={d.id}
