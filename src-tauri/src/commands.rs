@@ -370,6 +370,17 @@ pub fn list_directory(state: State<'_, AppState>, path: String, show_hidden: boo
         });
     }
 
+    if paths::is_unsupported_location(trimmed) {
+        // Saying which feature is missing is better than implying the folder is
+        // empty or broken.
+        let feature = if trimmed.to_ascii_lowercase().contains("trash") {
+            "The Recycle Bin cannot be browsed yet: Windows exposes it through shell item ids, not a folder path."
+        } else {
+            "Network locations are not browsable yet: they need the shell's network namespace."
+        };
+        return Err(CommandError { message: feature.into() });
+    }
+
     let real = paths::to_real(trimmed).ok_or_else(|| CommandError {
         message: format!("'{trimmed}' is not a location this app can open"),
     })?;

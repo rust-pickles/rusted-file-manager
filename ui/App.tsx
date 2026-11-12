@@ -49,6 +49,8 @@ export default function App() {
     selectedIds,
     setIsEditingAddress,
     theme,
+    directoryError,
+    isLoadingDirectory,
   } = useAppStore();
 
   const activeTab = tabs.find((t) => t.id === activeTabId);
@@ -82,6 +84,17 @@ export default function App() {
       if (mod && e.key.toLowerCase() === 'k') {
         e.preventDefault();
         openCommandPalette();
+        return;
+      }
+
+      // Advertised in Settings and in the search box, but never handled. The
+      // search field lives in the toolbar; this focuses it and selects any
+      // existing query so typing replaces it.
+      if (mod && e.key.toLowerCase() === 'f') {
+        e.preventDefault();
+        const field = document.querySelector<HTMLInputElement>('[data-search-input]');
+        field?.focus();
+        field?.select();
         return;
       }
 
@@ -290,6 +303,16 @@ export default function App() {
               cannot cover the file rows. */}
           <RubberBandSelect />
           <div className="relative flex-1 flex flex-col min-h-0 overflow-hidden">
+            {directoryError && (
+              <div className="shrink-0 mx-3 mt-3 px-3 py-2 rounded-[10px] border border-rose-500/40 bg-rose-500/10 text-rose-200 text-[11px]">
+                {directoryError}
+              </div>
+            )}
+            {isLoadingDirectory && !directoryError && (
+              <div className="shrink-0 mx-3 mt-3 text-[11px] text-[var(--text-muted)]">
+                Loading…
+              </div>
+            )}
             {renderMainView()}
           </div>
         </main>

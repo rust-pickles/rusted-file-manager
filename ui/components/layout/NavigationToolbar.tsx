@@ -194,8 +194,21 @@ export const NavigationToolbar: React.FC = () => {
         <div className="relative">
           <input
             type="text"
+            data-search-input
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
+            onKeyDown={(e) => {
+              // Enter runs the search; Escape clears it. Without this the field
+              // only filtered as you typed with no way to dismiss it.
+              if (e.key === 'Enter') {
+                e.preventDefault();
+                (e.currentTarget as HTMLInputElement).blur();
+              }
+              if (e.key === 'Escape') {
+                e.preventDefault();
+                setSearchQuery('');
+              }
+            }}
             placeholder="Search files... (Ctrl+F)"
             className="w-36 lg:w-48 h-7 pl-7 pr-2 bg-[var(--bg-surface)] border border-[var(--border-subtle)] focus:border-[var(--border-strong)] rounded-[10px] text-[var(--text-primary)] placeholder-[var(--text-muted)] text-xs focus:outline-none transition-all"
           />

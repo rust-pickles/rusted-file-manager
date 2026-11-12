@@ -115,6 +115,8 @@ interface AppState {
   // Current directory items (cached for active tab)
   directoryItems: FileItem[];
   isLoadingDirectory: boolean;
+  /** Why the current folder could not be listed, if it could not. */
+  directoryError: string | null;
   loadCurrentDirectory: () => Promise<void>;
 }
 
@@ -186,6 +188,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   operationJobs: [],
   directoryItems: [],
   isLoadingDirectory: false,
+  directoryError: null,
 
   createTab: (path = '/Home', title) => {
     const newId = `tab-${Date.now()}`;
@@ -707,8 +710,18 @@ export const useAppStore = create<AppState>((set, get) => ({
         const fresh = items.find((i) => i.id === activeItem.id);
         if (fresh) set({ activeItem: fresh });
       }
-    } catch {
-      set({ directoryItems: [], isLoadingDirectory: false });
+    } catch (failure) {
+      // An empty list and a failed list look identical on screen, which is how a
+      // permission error used to read as "this folder is empty". The reason is
+      // kept and rendered above the list.
+      set({
+        directoryItems: [],
+        isLoadingDirectory: false,
+        directoryError: failure instanceof Error ? failure.message : String(failure),
+      });
+      return;
     }
+
+    set({ directoryError: null });
   },
 }));

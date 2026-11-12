@@ -94,6 +94,14 @@ pub fn to_real(virtual_path: &str) -> Option<PathBuf> {
     let mut parts = stripped.split('/').filter(|part| !part.is_empty());
     let head = parts.next()?;
 
+    // These are sidebar entries, not folders. Resolving them used to produce an
+    // error that the UI swallowed into an empty list, which looked like an empty
+    // directory. The Recycle Bin has no single path (it is a shell namespace
+    // object), so it is reported as unsupported rather than faked.
+    if is_unsupported_location(trimmed) {
+        return None;
+    }
+
     if head.eq_ignore_ascii_case("Home") {
         let rest: Vec<&str> = parts.collect();
         if rest.is_empty() {
@@ -237,6 +245,15 @@ pub fn normalize(path: &Path) -> PathBuf {
         }
     }
     out
+}
+
+/// Locations the sidebar offers that are not real directories.
+///
+/// Kept in one place so the command layer can give a precise message instead of
+/// "not a location".
+pub fn is_unsupported_location(virtual_path: &str) -> bool {
+    let lowered = virtual_path.trim().trim_end_matches('/').to_ascii_lowercase();
+    lowered == "/trash" || lowered == "/home/network" || lowered == "/home/trash"
 }
 
 /// One sidebar entry: the virtual path the UI navigates to, and its label.

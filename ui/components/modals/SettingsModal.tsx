@@ -60,6 +60,7 @@ export const SettingsModal: React.FC = () => {
     { key: 'Delete', desc: 'Delete selected items' },
     { key: 'Ctrl + A', desc: 'Select all items in directory' },
     { key: 'Ctrl + C / X / V', desc: 'Copy / Cut / Paste clipboard' },
+    { key: 'Enter', desc: 'Run the search in the toolbar field' },
     { key: 'Ctrl + R', desc: 'Refresh directory' },
   ];
 
@@ -343,7 +344,7 @@ export const SettingsModal: React.FC = () => {
                 </div>
                 <div>
                   <h3 className="text-base font-bold text-[var(--text-primary)]">RUSTED</h3>
-                  <p className="text-xs text-[var(--text-secondary)]">Rusted File Manager — Version 2.4.0</p>
+                  <p className="text-xs text-[var(--text-secondary)]">Rusted File Manager — Version 0.1.0</p>
                   <p className="text-[10px] text-[var(--text-muted)] font-mono mt-0.5">Tauri 2 & Rust Core Architecture</p>
                 </div>
               </div>
