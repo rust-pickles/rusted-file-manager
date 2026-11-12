@@ -14,6 +14,7 @@ import {
   formatDate,
   getFileTypeLabel,
 } from '../../utils/formatters';
+import { openItem } from '../../services/openItem';
 
 export const ListView: React.FC = () => {
   const {
@@ -40,9 +41,13 @@ export const ListView: React.FC = () => {
     setActiveItem(item);
   };
 
-  const handleDoubleClick = (item: FileItem) => {
-    if (item.type === 'folder') {
-      navigateTab(activeTabId, item.path);
+  const handleDoubleClick = async (item: FileItem) => {
+    // Files used to do nothing at all here; only folders reacted, which is why
+    // double-clicking a document appeared to be broken.
+    const failure = await openItem(item, (path) => navigateTab(activeTabId, path));
+    if (failure) {
+      // A toast would be better, but surfacing the reason beats silence.
+      window.alert(failure);
     }
   };
 
@@ -125,7 +130,7 @@ export const ListView: React.FC = () => {
                 <div
                   key={item.id}
                   onClick={(e) => handleItemClick(e, item)}
-                  onDoubleClick={() => handleDoubleClick(item)}
+                  data-file-id={item.id} onDoubleClick={() => handleDoubleClick(item)}
                   onContextMenu={(e) => handleContextMenu(e, item)}
                   className={`flex items-center px-3 py-1.5 rounded-[8px] cursor-pointer transition-colors border ${
                     isSelected

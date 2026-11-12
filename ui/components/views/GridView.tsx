@@ -4,6 +4,7 @@ import { useAppStore } from '../../store/useAppStore';
 import { FileItem } from '../../types/filesystem';
 import { getFileIcon, formatBytes, getFileTypeLabel } from '../../utils/formatters';
 
+import { openItem } from '../../services/openItem';
 export const GridView: React.FC = () => {
   const {
     directoryItems,
@@ -37,9 +38,12 @@ export const GridView: React.FC = () => {
     setActiveItem(item);
   };
 
-  const handleDoubleClick = (item: FileItem) => {
-    if (item.type === 'folder') {
-      navigateTab(activeTabId, item.path);
+  const handleDoubleClick = async (item: FileItem) => {
+    // Folders navigate; files open in their associated application. Files were
+    // previously ignored entirely, which read as a broken double-click.
+    const failure = await openItem(item, (path) => navigateTab(activeTabId, path));
+    if (failure) {
+      window.alert(failure);
     }
   };
 
@@ -78,7 +82,7 @@ export const GridView: React.FC = () => {
               <div
                 key={item.id}
                 onClick={(e) => handleItemClick(e, item)}
-                onDoubleClick={() => handleDoubleClick(item)}
+                data-file-id={item.id} onDoubleClick={() => handleDoubleClick(item)}
                 onContextMenu={(e) => handleContextMenu(e, item)}
                 className={`group relative flex flex-col items-center rounded-[12px] p-2 cursor-pointer transition-all border ${cardDimensions} ${
                   isSelected

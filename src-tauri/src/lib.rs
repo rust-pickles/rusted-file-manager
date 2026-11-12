@@ -10,6 +10,8 @@
 //! and delegates to a backend crate, so the same code stays usable without a
 //! webview.
 
+#[cfg(windows)]
+pub mod clipboard;
 pub mod commands;
 pub mod dto;
 pub mod paths;
@@ -42,6 +44,10 @@ pub fn run() {
             commands::get_starred_items,
             commands::note_opened,
             commands::resolve_dropped_paths,
+            commands::open_path,
+            commands::reveal_path,
+            commands::copy_paths_to_clipboard,
+            commands::read_clipboard_paths,
         ])
         .setup(|app| {
             // Persistence lives next to the OS's per-user app data. If the

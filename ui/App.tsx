@@ -19,6 +19,7 @@ import { ContextMenu } from './components/modals/ContextMenu';
 import { ActionDialogs } from './components/modals/ActionDialogs';
 import { OperationQueueModal } from './components/modals/OperationQueueModal';
 import { SettingsModal } from './components/modals/SettingsModal';
+import { RubberBandSelect } from './components/common/RubberBandSelect';
 
 export default function App() {
   const {
@@ -275,7 +276,12 @@ export default function App() {
       <div className="flex-1 flex overflow-hidden relative">
         <Sidebar />
         <main className="flex-1 flex flex-col min-w-0 overflow-hidden relative bg-[var(--bg-app)]">
-          {renderMainView()}
+          {/* Sits under the views: presses on a row reach the row, presses on
+              empty space start a rubber-band selection. */}
+          <RubberBandSelect />
+          <div className="relative z-10 flex-1 flex flex-col min-h-0 overflow-hidden">
+            {renderMainView()}
+          </div>
         </main>
         <FileInspector />
       </div>

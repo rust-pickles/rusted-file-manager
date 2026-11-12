@@ -32,6 +32,11 @@ interface AppState {
   selectItem: (id: string, multiSelect?: boolean, rangeSelect?: boolean) => void;
   selectAll: (allIds: string[]) => void;
   clearSelection: () => void;
+  /** True while a rubber-band drag is in progress. */
+  isRubberBanding: boolean;
+  setIsRubberBanding: (active: boolean) => void;
+  /** Applies a rubber-band hit list, replacing or extending the selection. */
+  setRubberBandIds: (ids: string[], additive: boolean) => void;
   activeItem: FileItem | null;
   setActiveItem: (item: FileItem | null) => void;
 
@@ -137,6 +142,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   tabs: [INITIAL_TAB],
   activeTabId: 'tab-1',
   selectedIds: [],
+  isRubberBanding: false,
   activeItem: null,
   // Start at the profile folder. The old mock path "/Home/Documents" resolves
   // on a real machine too, but Documents can be redirected off the profile
@@ -411,6 +417,25 @@ export const useAppStore = create<AppState>((set, get) => ({
     }));
   },
 
+  setIsRubberBanding: (active: boolean) => {
+    set({ isRubberBanding: active });
+  },
+
+  setRubberBandIds: (ids: string[], additive: boolean) => {
+    if (ids.length === 0) {
+      if (!additive) set({ selectedIds: [], activeItem: null });
+      return;
+    }
+    set((state) => {
+      const next = additive ? Array.from(new Set([...state.selectedIds, ...ids])) : ids;
+      const activeItem =
+        state.activeItem && next.includes(state.activeItem.id)
+          ? state.activeItem
+          : state.directoryItems.find((item) => item.id === next[0]) ?? null;
+      return { selectedIds: next, activeItem };
+    });
+  },
+
   setActiveItem: (item: FileItem | null) => {
     set({ activeItem: item });
   },
@@ -500,32 +525,58 @@ export const useAppStore = create<AppState>((set, get) => ({
   copySelection: () => {
     const { selectedIds, directoryItems } = get();
     const items = directoryItems.filter((i) => selectedIds.includes(i.id));
-    if (items.length > 0) {
-      set({ clipboard: { items, operation: 'copy' } });
-    }
+    if (items.length === 0) return;
+    set({ clipboard: { items, operation: 'copy' } });
+
+    // Also hand the paths to Windows so a copy made here can be pasted in
+    // Explorer. A failure must not break the in-app clipboard.
+    void fileSystemService
+      .copyPathsToClipboard(items.map((item) => item.path))
+      .catch((error: unknown) => console.warn('clipboard:', error));
   },
 
   cutSelection: () => {
     const { selectedIds, directoryItems } = get();
     const items = directoryItems.filter((i) => selectedIds.includes(i.id));
-    if (items.length > 0) {
-      set({ clipboard: { items, operation: 'cut' } });
-    }
+    if (items.length === 0) return;
+    set({ clipboard: { items, operation: 'cut' } });
+
+    // Put the files on the OS clipboard as well, so a cut can be pasted in
+    // Explorer. Explorer owns the "move" semantics for its own paste.
+    void fileSystemService
+      .copyPathsToClipboard(items.map((item) => item.path))
+      .catch((error: unknown) => console.warn('clipboard:', error));
   },
 
   pasteToPath: async (targetPath?: string) => {
     const { clipboard, currentPath } = get();
-    if (!clipboard || clipboard.items.length === 0) return;
+    if (!clipboard || clipboard.items.length === 0) {
+      // Nothing copied inside the app. The user may have copied in Explorer, so
+      // ask Windows rather than doing nothing, which looks like a broken paste.
+      const external = await fileSystemService.readClipboardPaths().catch(() => [] as string[]);
+      if (external.length === 0) return;
+      const resolved = await Promise.all(
+        external.map((path) => fileSystemService.getItem(path).catch(() => undefined)),
+      );
+      const items = resolved.filter((item): item is FileItem => Boolean(item));
+      if (items.length === 0) return;
+      set({ clipboard: { items, operation: 'copy' } });
+    }
+
+    // Re-read after the external-clipboard branch above, which may have just
+    // populated it.
+    const active = get().clipboard;
+    if (!active || active.items.length === 0) return;
 
     const dest = targetPath || currentPath;
-    const srcPaths = clipboard.items.map((i) => i.path);
-    const totalBytes = clipboard.items.reduce((acc, i) => acc + i.size, 0);
+    const srcPaths = active.items.map((i) => i.path);
+    const totalBytes = active.items.reduce((acc, i) => acc + i.size, 0);
 
     const jobId = `job-${Date.now()}`;
     const newJob: FileOperationJob = {
       id: jobId,
-      type: clipboard.operation === 'copy' ? 'copy' : 'move',
-      title: `${clipboard.operation === 'copy' ? 'Copying' : 'Moving'} ${clipboard.items.length} item(s)`,
+      type: active.operation === 'copy' ? 'copy' : 'move',
+      title: `${active.operation === 'copy' ? 'Copying' : 'Moving'} ${active.items.length} item(s)`,
       sourcePaths: srcPaths,
       destinationPath: dest,
       progress: 5,
@@ -560,11 +611,28 @@ export const useAppStore = create<AppState>((set, get) => ({
 
     setTimeout(async () => {
       clearInterval(interval);
-      if (clipboard.operation === 'copy') {
-        await fileSystemService.copyItems(srcPaths, dest);
-      } else {
-        await fileSystemService.moveItems(srcPaths, dest);
-        set({ clipboard: null });
+      try {
+        if (active.operation === 'copy') {
+          await fileSystemService.copyItems(srcPaths, dest);
+        } else {
+          await fileSystemService.moveItems(srcPaths, dest);
+          set({ clipboard: null });
+        }
+      } catch (error) {
+        // The job used to sit at 100% even when the transfer failed, which is
+        // the worst possible report. Mark it failed and keep the reason.
+        set((state) => ({
+          operationJobs: state.operationJobs.map((job) =>
+            job.id === jobId
+              ? {
+                  ...job,
+                  status: 'error' as const,
+                  errorMessage: error instanceof Error ? error.message : String(error),
+                }
+              : job,
+          ),
+        }));
+        return;
       }
       get().loadCurrentDirectory();
     }, 900);

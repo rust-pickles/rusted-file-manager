@@ -24,6 +24,14 @@ export interface IFileSystemService {
   getStorageOverview(): Promise<{ drives: DriveInfo[]; categories: StorageCategoryBreakdown[] }>;
   getRecentFiles(limit?: number): Promise<FileItem[]>;
   getStarredItems(): Promise<FileItem[]>;
+  /** Opens a file or folder with whatever Windows associates with it. */
+  openPath(path: string): Promise<void>;
+  /** Shows the item selected inside the system file browser. */
+  revealPath(path: string): Promise<void>;
+  /** Puts real files on the system clipboard, so Explorer can paste them. */
+  copyPathsToClipboard(paths: string[]): Promise<void>;
+  /** Reads the files currently on the system clipboard, as virtual paths. */
+  readClipboardPaths(): Promise<string[]>;
 }
 
 class MockFileSystemService implements IFileSystemService {
@@ -504,6 +512,25 @@ class MockFileSystemService implements IFileSystemService {
       parent.itemCount = Math.max(0, current + delta);
     }
   }
+
+  /**
+   * A browser tab cannot launch a desktop application, so the mock reports that
+   * honestly instead of pretending the file opened.
+   */
+  public async openPath(path: string): Promise<void> {
+    throw new Error(`Cannot open "${path}" in a browser. Build the desktop app to open files.`);
+  }
+
+  public async revealPath(_path: string): Promise<void> {
+    throw new Error('Showing a file in Explorer needs the desktop app.');
+  }
+
+  /** Nothing to do: a web page has no system clipboard for files. */
+  public async copyPathsToClipboard(_paths: string[]): Promise<void> {}
+
+  public async readClipboardPaths(): Promise<string[]> {
+    return [];
+  }
 }
 
 /**
@@ -613,6 +640,23 @@ class TauriFileSystemService implements IFileSystemService {
 
   public async getStarredItems(): Promise<FileItem[]> {
     return this.call<FileItem[]>('get_starred_items');
+  }
+
+  public async openPath(path: string): Promise<void> {
+    await this.call<void>('open_path', { path });
+  }
+
+  public async revealPath(path: string): Promise<void> {
+    await this.call<void>('reveal_path', { path });
+  }
+
+  public async copyPathsToClipboard(paths: string[]): Promise<void> {
+    // Tauri converts this to the Rust parameter `paths_to_copy`.
+    await this.call<void>('copy_paths_to_clipboard', { pathsToCopy: paths });
+  }
+
+  public async readClipboardPaths(): Promise<string[]> {
+    return this.call<string[]>('read_clipboard_paths');
   }
 }
 

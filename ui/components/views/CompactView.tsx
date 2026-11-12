@@ -3,6 +3,7 @@ import { useAppStore } from '../../store/useAppStore';
 import { FileItem } from '../../types/filesystem';
 import { getFileIcon, formatBytes } from '../../utils/formatters';
 
+import { openItem } from '../../services/openItem';
 export const CompactView: React.FC = () => {
   const {
     directoryItems,
@@ -22,9 +23,12 @@ export const CompactView: React.FC = () => {
     setActiveItem(item);
   };
 
-  const handleDoubleClick = (item: FileItem) => {
-    if (item.type === 'folder') {
-      navigateTab(activeTabId, item.path);
+  const handleDoubleClick = async (item: FileItem) => {
+    // Folders navigate; files open in their associated application. Files were
+    // previously ignored entirely, which read as a broken double-click.
+    const failure = await openItem(item, (path) => navigateTab(activeTabId, path));
+    if (failure) {
+      window.alert(failure);
     }
   };
 
@@ -53,7 +57,7 @@ export const CompactView: React.FC = () => {
             <div
               key={item.id}
               onClick={(e) => handleItemClick(e, item)}
-              onDoubleClick={() => handleDoubleClick(item)}
+              data-file-id={item.id} onDoubleClick={() => handleDoubleClick(item)}
               onContextMenu={(e) => handleContextMenu(e, item)}
               className={`flex items-center justify-between px-2.5 py-1.5 rounded-[8px] cursor-pointer transition-colors border ${
                 isSelected

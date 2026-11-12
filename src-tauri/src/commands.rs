@@ -46,6 +46,122 @@ impl<E: std::fmt::Display> From<E> for CommandError {
 
 type Result<T> = std::result::Result<T, CommandError>;
 
+/// Opens a file with its default application, the way Explorer does.
+///
+/// `Command::new(path)` is deliberately avoided: it would try to *execute* the
+/// file, so a `.pdf` or `.jpg` would fail and a `.exe` would run without the
+/// shell's normal handling. `cmd /C start` hands the path to the shell, which
+/// honours file associations, `.lnk` targets and elevation prompts.
+#[tauri::command]
+pub fn open_path(path: String) -> Result<()> {
+    let real = paths::to_real(&path)
+        .ok_or_else(|| CommandError { message: format!("'{path}' is not a location") })?;
+    if !real.exists() {
+        return Err(CommandError { message: format!("'{}' no longer exists", real.display()) });
+    }
+
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        // The empty title argument is required: `start` treats the first quoted
+        // argument as the window title, so a path with spaces would be eaten.
+        std::process::Command::new("cmd")
+            .args(["/C", "start", "", &real.to_string_lossy()])
+            .creation_flags(CREATE_NO_WINDOW)
+            .spawn()
+            .map_err(|error| CommandError { message: format!("could not open '{}': {error}", real.display()) })?;
+        return Ok(());
+    }
+    #[cfg(not(windows))]
+    {
+        let opener = if cfg!(target_os = "macos") { "open" } else { "xdg-open" };
+        std::process::Command::new(opener)
+            .arg(&real)
+            .spawn()
+            .map_err(|error| CommandError { message: format!("could not open '{}': {error}", real.display()) })?;
+        Ok(())
+    }
+}
+
+/// Opens the folder and selects the item in the system file browser.
+#[tauri::command]
+pub fn reveal_path(path: String) -> Result<()> {
+    let real = paths::to_real(&path)
+        .ok_or_else(|| CommandError { message: format!("'{path}' is not a location") })?;
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        // /select, needs the comma glued to it and the path passed separately.
+        std::process::Command::new("explorer")
+            .raw_arg(format!("/select,\"{}\"", real.display()))
+            .creation_flags(CREATE_NO_WINDOW)
+            .spawn()
+            .map_err(|error| CommandError { message: format!("could not reveal '{}': {error}", real.display()) })?;
+        return Ok(());
+    }
+    #[cfg(not(windows))]
+    {
+        let folder = if real.is_dir() { real.clone() } else { real.parent().map(|p| p.to_path_buf()).unwrap_or(real.clone()) };
+        let opener = if cfg!(target_os = "macos") { "open" } else { "xdg-open" };
+        std::process::Command::new(opener)
+            .arg(folder)
+            .spawn()
+            .map_err(|error| CommandError { message: error.to_string() })?;
+        Ok(())
+    }
+}
+
+/// Puts native file paths on the system clipboard as "files".
+///
+/// Text-only clipboard support cannot express this: pasting into Explorer needs
+/// the CF_HDROP format, which holds a list of paths. That is why a copied file
+/// pasted here could never be pasted into Explorer before.
+#[tauri::command]
+pub fn copy_paths_to_clipboard(paths_to_copy: Vec<String>) -> Result<()> {
+    #[cfg(windows)]
+    {
+        let mut files = Vec::new();
+        for path in &paths_to_copy {
+            if let Some(real) = paths::to_real(path) {
+                if real.exists() {
+                    files.push(real);
+                }
+            }
+        }
+        if files.is_empty() {
+            return Err(CommandError { message: "nothing to copy".into() });
+        }
+        crate::clipboard::set_files(&files)
+            .map_err(|error| CommandError { message: error })?;
+        return Ok(());
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = paths_to_copy;
+        Err(CommandError { message: "copying files to the clipboard is Windows-only".into() })
+    }
+}
+
+/// Reads back the file list on the clipboard, so the app can tell the user what
+/// a paste would bring in even when the copy happened in Explorer.
+#[tauri::command]
+pub fn read_clipboard_paths() -> Vec<String> {
+    #[cfg(windows)]
+    {
+        return crate::clipboard::get_files()
+            .unwrap_or_default()
+            .into_iter()
+            .map(|path| paths::to_virtual(&path))
+            .collect();
+    }
+    #[cfg(not(windows))]
+    {
+        Vec::new()
+    }
+}
+
 /// Returns build metadata and the theme list the frontend needs to render.
 #[tauri::command]
 pub fn app_info() -> AppInfo {

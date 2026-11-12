@@ -57,6 +57,14 @@ windows-sys = { version = "=0.61.2", features = [
     "Win32_UI_Shell",
     # CoTaskMemFree releases the string the shell allocates for that call.
     "Win32_System_Com",
+    # DragQueryFileW reads a CF_HDROP list back out of the clipboard.
+    "Win32_System_Ole",
+    # Clipboard open/close and CF_HDROP transfer.
+    "Win32_System_DataExchange",
+    # GMEM_MOVEABLE buffers that the clipboard takes ownership of.
+    "Win32_System_Memory",
+    # HGLOBAL/HANDLE types shared by the two modules above.
+    "Win32_Foundation",
 ] }
 zip = { version = "=5.1.1", default-features = false, features = ["deflate"] }
 

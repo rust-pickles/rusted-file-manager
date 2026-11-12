@@ -84,6 +84,8 @@ export interface FileOperationJob {
   speed: string; // e.g. "128 MB/s"
   status: 'running' | 'completed' | 'paused' | 'cancelled' | 'error';
   startedAt: string;
+  /** Why the operation failed, shown in the queue instead of a fake 100%. */
+  errorMessage?: string;
 }
 
 export interface ContextMenuPosition {

@@ -12,6 +12,7 @@ interface ColumnLevel {
   loading: boolean;
 }
 
+import { openItem } from '../../services/openItem';
 export const MillerColumnsView: React.FC = () => {
   const {
     currentPath,
@@ -101,9 +102,12 @@ export const MillerColumnsView: React.FC = () => {
     }
   };
 
-  const handleItemDoubleClick = (item: FileItem) => {
-    if (item.type === 'folder') {
-      navigateTab(activeTabId, item.path);
+  const handleItemDoubleClick = async (item: FileItem) => {
+    // Folders navigate; files open in their associated application. Files were
+    // previously ignored entirely, which read as a broken double-click.
+    const failure = await openItem(item, (path) => navigateTab(activeTabId, path));
+    if (failure) {
+      window.alert(failure);
     }
   };
 
@@ -192,7 +196,7 @@ export const MillerColumnsView: React.FC = () => {
                         onDragLeave={() => setDragOverPath(null)}
                         onDrop={(e) => handleDrop(e, item)}
                         onClick={() => handleItemClick(item, colIndex)}
-                        onDoubleClick={() => handleItemDoubleClick(item)}
+                        data-file-id={item.id} onDoubleClick={() => handleItemDoubleClick(item)}
                         onContextMenu={(e) => handleContextMenu(e, item, column.path)}
                         className={`group flex items-center justify-between px-2.5 py-1.5 rounded-[10px] cursor-pointer transition-colors text-left border ${
                           isDragTarget

@@ -43,5 +43,10 @@ rusted-fs.workspace = true
 rusted-operations.workspace = true
 rusted-storage.workspace = true
 
+# The clipboard lives in this crate because it is pure Win32 plumbing with no
+# backend logic: CF_HDROP is how Windows represents copied *files*.
+[target.'cfg(windows)'.dependencies]
+windows-sys.workspace = true
+
 [dev-dependencies]
 tempfile.workspace = true
