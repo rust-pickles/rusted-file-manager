@@ -192,6 +192,23 @@ pub struct DriveDto {
     pub icon_type: DriveIconType,
 }
 
+/// Filesystem health for one drive, as reported to the Storage view.
+///
+/// `writable` comes from a real write probe, not from permissions, so a volume
+/// that is mounted read-only or failing is called out instead of being shown
+/// with healthy-looking free space.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DriveHealthDto {
+    pub name: String,
+    /// Virtual path of the drive root, so the UI can navigate to it.
+    pub root: String,
+    pub total: Option<u64>,
+    pub free: Option<u64>,
+    pub writable: bool,
+    pub problem: Option<String>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum DriveIconType {

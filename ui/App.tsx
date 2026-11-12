@@ -276,10 +276,11 @@ export default function App() {
       <div className="flex-1 flex overflow-hidden relative">
         <Sidebar />
         <main className="flex-1 flex flex-col min-w-0 overflow-hidden relative bg-[var(--bg-app)]">
-          {/* Sits under the views: presses on a row reach the row, presses on
-              empty space start a rubber-band selection. */}
+          {/* Wraps the view so a press on empty space can start a selection
+              drag. It renders with `display: contents`, so it adds no box and
+              cannot cover the file rows. */}
           <RubberBandSelect />
-          <div className="relative z-10 flex-1 flex flex-col min-h-0 overflow-hidden">
+          <div className="relative flex-1 flex flex-col min-h-0 overflow-hidden">
             {renderMainView()}
           </div>
         </main>

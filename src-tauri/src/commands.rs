@@ -5,7 +5,7 @@
 //! No command implements filesystem logic itself; it resolves a path, calls the
 //! backend crate, and maps the result.
 
-use crate::dto::{AppInfo, AssetRoot, DirectoryListing, DriveDto, FileItem, FileType, ThemeId};
+use crate::dto::{AppInfo, AssetRoot, DirectoryListing, DriveDto, DriveHealthDto, FileItem, FileType, ThemeId};
 use crate::paths::{self, Location};
 use tauri::State;
 
@@ -175,6 +175,56 @@ pub fn read_clipboard_paths() -> Vec<String> {
 #[tauri::command]
 pub fn quick_access_entries() -> Vec<paths::QuickAccess> {
     paths::quick_access()
+}
+
+/// Drives with capacity only, for the first paint.
+///
+/// Split from `get_storage_overview` on purpose: this reads cached volume
+/// metadata and returns in microseconds, while the overview scans folders. The
+/// sidebar and the Storage view both call this first so space appears at once,
+/// instead of after a scan.
+#[tauri::command]
+pub fn list_drives() -> Vec<DriveDto> {
+    rusted_fs::drives()
+        .into_iter()
+        .map(|mut drive| {
+            // Capacity is already part of DriveInfo; nothing else is needed here,
+            // but the field is re-read through the fast probe so a stale cached
+            // value in DriveInfo cannot disagree with the badge.
+            if let Some((total, free)) = rusted_fs::drive_capacity(&drive.root) {
+                drive.total = Some(total);
+                drive.free = Some(free);
+            }
+            DriveDto::from(drive)
+        })
+        .collect()
+}
+
+/// Per-drive filesystem health, including a real write probe.
+///
+/// The Storage view calls this to show warnings. A drive that reports free space
+/// but rejects writes (read-only mount, failing disk, full allocation) is the
+/// failure this catches, and it is invisible to a capacity check alone.
+#[tauri::command]
+pub async fn drive_health_report() -> Result<Vec<DriveHealthDto>> {
+    tauri::async_runtime::spawn_blocking(|| {
+        rusted_fs::drives()
+            .into_iter()
+            .map(|drive| {
+                let health = rusted_fs::drive_health(&drive.root);
+                DriveHealthDto {
+                    name: drive.display_name(),
+                    root: paths::to_virtual(&drive.root),
+                    total: health.total,
+                    free: health.free,
+                    writable: health.writable,
+                    problem: health.problem,
+                }
+            })
+            .collect::<Vec<_>>()
+    })
+    .await
+    .map_err(|error| CommandError { message: format!("drive health check failed: {error}") })
 }
 
 /// Returns build metadata and the theme list the frontend needs to render.

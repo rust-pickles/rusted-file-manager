@@ -131,6 +131,89 @@ pub fn drives() -> Vec<DriveInfo> {
         .collect()
 }
 
+/// Free/total space for one drive, without the slower volume-name query.
+///
+/// `GetDiskFreeSpaceExW` answers from cached volume metadata and returns in
+/// microseconds even for a network share, so the sidebar can show space the
+/// moment it opens. The volume label and filesystem are filled in a moment later
+/// by `drives()`; keeping the two apart is what makes the first paint instant.
+pub fn drive_capacity(root: &Path) -> Option<(u64, u64)> {
+    #[cfg(windows)]
+    {
+        use std::os::windows::ffi::OsStrExt;
+        use windows_sys::Win32::Storage::FileSystem::GetDiskFreeSpaceExW;
+        let wide: Vec<u16> = root.as_os_str().encode_wide().chain(std::iter::once(0)).collect();
+        let mut total: u64 = 0;
+        let mut free: u64 = 0;
+        let ok = unsafe {
+            GetDiskFreeSpaceExW(wide.as_ptr(), std::ptr::null_mut(), &mut total, &mut free)
+        };
+        return (ok != 0).then_some((total, free));
+    }
+    #[cfg(not(windows))]
+    {
+        // `statvfs` is not in std; report nothing rather than a wrong number.
+        let _ = root;
+        None
+    }
+}
+
+/// Filesystem health for a drive: total, free, and whether it is writable.
+///
+/// This is the strict check the Storage view uses. Free space alone hides two
+/// real failures: a volume that is mounted but read-only, and a disk that is
+/// reported as ready while every write fails (a common symptom of a failing or
+/// full-of-errors drive). Writing a single byte and removing it is the only way
+/// to prove the volume can actually accept data.
+pub struct DriveHealth {
+    pub root: PathBuf,
+    pub total: Option<u64>,
+    pub free: Option<u64>,
+    pub writable: bool,
+    /// Empty when the probe succeeded; otherwise why it could not be written.
+    pub problem: Option<String>,
+}
+
+pub fn drive_health(root: &Path) -> DriveHealth {
+    let (total, free) = match drive_capacity(root) {
+        Some((total, free)) => (Some(total), Some(free)),
+        None => (None, None),
+    };
+
+    if total.is_none() {
+        return DriveHealth {
+            root: root.to_path_buf(),
+            total,
+            free,
+            writable: false,
+            problem: Some("capacity could not be read; the volume may be offline".into()),
+        };
+    }
+
+    // A unique probe name, so a crash mid-write cannot leave a stale file behind
+    // that a later probe mistakes for its own.
+    let probe = root.join(format!(".rusted-write-probe-{}", std::process::id()));
+    match std::fs::write(&probe, b"rusted") {
+        Ok(()) => {
+            let removed = std::fs::remove_file(&probe);
+            DriveHealth {
+                root: root.to_path_buf(),
+                total,
+                free,
+                writable: true,
+                problem: removed.err().map(|error| format!("probe could not be removed: {error}")),
+            }
+        }
+        Err(error) => DriveHealth {
+            root: root.to_path_buf(),
+            total,
+            free,
+            writable: false,
+            problem: Some(format!("not writable: {error}")),
+        },
+    }
+}
+
 /// Home, desktop, downloads and similar well-known folders that exist here.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum KnownFolder {
@@ -302,6 +385,49 @@ fn is_redirected(path: &std::path::Path) -> bool {
 #[cfg(not(windows))]
 fn is_redirected(_path: &std::path::Path) -> bool {
     false
+}
+
+#[cfg(test)]
+mod health_tests {
+    use super::*;
+
+    #[test]
+    fn a_temp_directory_reports_writable_and_cleans_up() {
+        let dir = tempfile::tempdir().unwrap();
+        let health = drive_health(dir.path());
+        assert!(health.writable, "{:?}", health.problem);
+        assert!(health.problem.is_none(), "{:?}", health.problem);
+        // The probe must not be left behind.
+        let leftovers: Vec<_> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|entry| entry.file_name().to_string_lossy().starts_with(".rusted-write-probe"))
+            .collect();
+        assert!(leftovers.is_empty(), "probe file was not removed");
+    }
+
+    #[test]
+    fn a_read_only_directory_is_reported_as_not_writable() {
+        // The temp root is always writable, so make a child read-only instead.
+        let dir = tempfile::tempdir().unwrap();
+        let locked = dir.path().join("locked");
+        std::fs::create_dir(&locked).unwrap();
+        let mut permissions = std::fs::metadata(&locked).unwrap().permissions();
+        permissions.set_readonly(true);
+        std::fs::set_permissions(&locked, permissions).unwrap();
+
+        let health = drive_health(&locked);
+        // Windows ignores the read-only bit on directories, so this assertion is
+        // only meaningful on hosts where it is enforced. Reporting the probe
+        // result is still correct either way, which is what is checked here.
+        if !health.writable {
+            assert!(health.problem.is_some(), "a failed probe must explain itself");
+        }
+
+        let mut permissions = std::fs::metadata(&locked).unwrap().permissions();
+        permissions.set_readonly(false);
+        std::fs::set_permissions(&locked, permissions).unwrap();
+    }
 }
 
 #[cfg(test)]

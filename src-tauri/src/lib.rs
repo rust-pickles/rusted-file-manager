@@ -49,6 +49,8 @@ pub fn run() {
             commands::copy_paths_to_clipboard,
             commands::read_clipboard_paths,
             commands::quick_access_entries,
+            commands::list_drives,
+            commands::drive_health_report,
         ])
         .setup(|app| {
             // Persistence lives next to the OS's per-user app data. If the

@@ -5,71 +5,108 @@ import { useAppStore } from '../../store/useAppStore';
  * Rectangular ("rubber band") selection for the file area.
  *
  * Drag on empty space to draw a box; every row or tile it touches is selected.
- * The box is measured against the real rectangles of elements carrying
- * `data-file-id`, so this works for the list, grid, compact and Miller views
- * without any of them knowing it exists.
+ * The box is measured against the rectangles of the elements carrying
+ * `data-file-id`, so list, grid, compact and Miller views all support it without
+ * knowing this exists.
  *
- * Ctrl, Shift or Cmd held at the end of a drag adds to the existing selection
- * instead of replacing it, matching Explorer. A plain click on empty space
- * clears the selection.
+ * Why it previously did nothing: the trigger element was a zero-opacity overlay
+ * rendered *underneath* an opaque view container, so it could never receive a
+ * mousedown. The handler now lives on the scroll container itself and only
+ * starts a drag when the press did not land on a row, a control or a menu. That
+ * also means no extra element sits in the layout at all.
+ *
+ * Ctrl, Shift or Cmd held during the drag extends the selection; a plain click
+ * on empty space clears it.
  */
 
-interface Point {
-  x: number;
-  y: number;
+interface Box {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
 }
 
-const MIN_DRAG = 4; // px: below this a drag is treated as a click on empty space
+const MIN_DRAG = 3; // px. Below this the gesture is a click, not a drag.
 
 export const RubberBandSelect: React.FC = () => {
-  const originRef = useRef<Point | null>(null);
+  const startRef = useRef<{ x: number; y: number } | null>(null);
   const additiveRef = useRef(false);
-  const [origin, setOrigin] = useState<Point | null>(null);
-  const [current, setCurrent] = useState<Point | null>(null);
+  const [box, setBox] = useState<Box | null>(null);
 
   const { clearSelection, setIsRubberBanding, setRubberBandIds } = useAppStore();
 
-  const finish = useCallback(() => {
-    const started = originRef.current;
-    const ended = current;
-    originRef.current = null;
-    setOrigin(null);
-    setCurrent(null);
-    setIsRubberBanding(false);
-
-    if (!started || !ended) return;
-    const moved =
-      Math.abs(ended.x - started.x) > MIN_DRAG || Math.abs(ended.y - started.y) > MIN_DRAG;
-    if (!moved) {
-      if (!additiveRef.current) clearSelection();
-      return;
-    }
-
-    const left = Math.min(started.x, ended.x);
-    const right = Math.max(started.x, ended.x);
-    const top = Math.min(started.y, ended.y);
-    const bottom = Math.max(started.y, ended.y);
-
+  const collect = (rect: Box): string[] => {
     const hits: string[] = [];
     document.querySelectorAll<HTMLElement>('[data-file-id]').forEach((node) => {
-      const rect = node.getBoundingClientRect();
+      const r = node.getBoundingClientRect();
       // Touching counts, so a thin drag across a row still selects it.
       const overlaps =
-        rect.left < right && rect.right > left && rect.top < bottom && rect.bottom > top;
+        r.left < rect.left + rect.width &&
+        r.right > rect.left &&
+        r.top < rect.top + rect.height &&
+        r.bottom > rect.top;
       const id = node.dataset.fileId;
       if (overlaps && id) hits.push(id);
     });
+    return hits;
+  };
 
-    setRubberBandIds(hits, additiveRef.current);
-  }, [current, clearSelection, setIsRubberBanding, setRubberBandIds]);
+  const onMouseDown = useCallback(
+    (event: React.MouseEvent) => {
+      if (event.button !== 0) return;
+      const target = event.target as HTMLElement;
+      // A press on a row, a control or an overlay keeps its own behaviour and is
+      // never converted into a selection drag.
+      if (target.closest('[data-file-id]')) return;
+      if (target.closest('button, input, a, textarea, select, [role="button"], [role="menuitem"], [data-no-rubber-band]')) return;
+
+      startRef.current = { x: event.clientX, y: event.clientY };
+      additiveRef.current = event.ctrlKey || event.metaKey || event.shiftKey;
+      setIsRubberBanding(true);
+    },
+    [setIsRubberBanding],
+  );
 
   useEffect(() => {
-    if (!origin) return;
+    const onMove = (event: MouseEvent) => {
+      const start = startRef.current;
+      if (!start) return;
+      const dx = event.clientX - start.x;
+      const dy = event.clientY - start.y;
+      if (Math.abs(dx) < MIN_DRAG && Math.abs(dy) < MIN_DRAG) return;
+      setBox({
+        left: Math.min(start.x, event.clientX),
+        top: Math.min(start.y, event.clientY),
+        width: Math.abs(dx),
+        height: Math.abs(dy),
+      });
+    };
 
-    // Registered once per drag, not per mousemove: the position lives in state
-    // for rendering, so re-subscribing on every pixel would be wasteful.
-    const onMove = (event: MouseEvent) => setCurrent({ x: event.clientX, y: event.clientY });
-    const onUp = () => finish();
+    const onUp = (event: MouseEvent) => {
+      const start = startRef.current;
+      startRef.current = null;
+      setIsRubberBanding(false);
+
+      const moved = start
+        ? Math.abs(event.clientX - start.x) >= MIN_DRAG || Math.abs(event.clientY - start.y) >= MIN_DRAG
+        : false;
+
+      if (!moved) {
+        setBox(null);
+        // A click on empty space clears the selection, like Explorer.
+        if (start && !additiveRef.current) clearSelection();
+        return;
+      }
+
+      const rect: Box = {
+        left: Math.min(start!.x, event.clientX),
+        top: Math.min(start!.y, event.clientY),
+        width: Math.abs(event.clientX - start!.x),
+        height: Math.abs(event.clientY - start!.y),
+      };
+      setBox(null);
+      setRubberBandIds(collect(rect), additiveRef.current);
+    };
 
     window.addEventListener('mousemove', onMove);
     window.addEventListener('mouseup', onUp);
@@ -77,45 +114,22 @@ export const RubberBandSelect: React.FC = () => {
       window.removeEventListener('mousemove', onMove);
       window.removeEventListener('mouseup', onUp);
     };
-  }, [origin, finish]);
-
-  const onMouseDown = (event: React.MouseEvent) => {
-    // Left button only, and only on empty space: a press on a row must keep
-    // doing normal row selection.
-    if (event.button !== 0) return;
-    const target = event.target as HTMLElement;
-    if (target.closest('[data-file-id]')) return;
-    if (target.closest('button, input, a, [role="button"], [role="menuitem"]')) return;
-
-    additiveRef.current = event.ctrlKey || event.metaKey || event.shiftKey;
-    const point = { x: event.clientX, y: event.clientY };
-    originRef.current = point;
-    setOrigin(point);
-    setCurrent(point);
-    setIsRubberBanding(true);
-  };
-
-  const box =
-    origin && current
-      ? {
-          left: Math.min(origin.x, current.x),
-          top: Math.min(origin.y, current.y),
-          width: Math.abs(current.x - origin.x),
-          height: Math.abs(current.y - origin.y),
-        }
-      : null;
+  }, [clearSelection, setIsRubberBanding, setRubberBandIds]);
 
   return (
-    <>
-      {/* Transparent hit area covering the file region. It sits below the rows,
-          so presses on a row still reach the row. */}
-      <div onMouseDown={onMouseDown} className="absolute inset-0 z-0" aria-hidden="true" />
+    <div
+      onMouseDown={onMouseDown}
+      className="contents"
+      /* `contents` keeps this wrapper out of layout: the handler is attached for
+         event delegation only, so nothing can cover the views. */
+      aria-hidden="true"
+    >
       {box && (
         <div
-          className="fixed pointer-events-none z-50 rounded-[2px] border border-[var(--accent)] bg-[var(--accent)]/15"
+          className="fixed pointer-events-none z-[60] rounded-[2px] border border-[var(--accent)] bg-[var(--accent)]/15"
           style={{ left: box.left, top: box.top, width: box.width, height: box.height }}
         />
       )}
-    </>
+    </div>
   );
 };

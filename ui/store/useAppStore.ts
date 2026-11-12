@@ -138,6 +138,20 @@ const INITIAL_TAB: TabState = {
   sortOrder: 'asc',
 };
 
+/** Bytes per second as a short human string, for the operation queue. */
+function formatRate(bytes: number, elapsedMs: number): string {
+  if (bytes <= 0) return '';
+  const perSecond = bytes / (elapsedMs / 1000);
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  let value = perSecond;
+  let unit = 0;
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024;
+    unit += 1;
+  }
+  return `${value < 10 ? value.toFixed(1) : Math.round(value)} ${units[unit]}/s`;
+}
+
 export const useAppStore = create<AppState>((set, get) => ({
   tabs: [INITIAL_TAB],
   activeTabId: 'tab-1',
@@ -548,11 +562,19 @@ export const useAppStore = create<AppState>((set, get) => ({
       .catch((error: unknown) => console.warn('clipboard:', error));
   },
 
+  /**
+   * Copies or moves the clipboard into `targetPath` and refreshes the view.
+   *
+   * Rewritten because the old version was misleading: it opened the operation
+   * queue, animated a fake 25%-per-tick progress bar, waited 900 ms and only then
+   * touched the disk. A user who pasted into the folder they were looking at saw
+   * nothing happen, because the reload raced the transfer and the bar was a lie.
+   */
   pasteToPath: async (targetPath?: string) => {
-    const { clipboard, currentPath } = get();
-    if (!clipboard || clipboard.items.length === 0) {
+    const { currentPath } = get();
+    if (!get().clipboard || (get().clipboard?.items.length ?? 0) === 0) {
       // Nothing copied inside the app. The user may have copied in Explorer, so
-      // ask Windows rather than doing nothing, which looks like a broken paste.
+      // ask Windows instead of doing nothing, which looks like a broken paste.
       const external = await fileSystemService.readClipboardPaths().catch(() => [] as string[]);
       if (external.length === 0) return;
       const resolved = await Promise.all(
@@ -563,79 +585,79 @@ export const useAppStore = create<AppState>((set, get) => ({
       set({ clipboard: { items, operation: 'copy' } });
     }
 
-    // Re-read after the external-clipboard branch above, which may have just
-    // populated it.
+    // Re-read: the external-clipboard branch above may have just populated it.
     const active = get().clipboard;
     if (!active || active.items.length === 0) return;
 
     const dest = targetPath || currentPath;
     const srcPaths = active.items.map((i) => i.path);
     const totalBytes = active.items.reduce((acc, i) => acc + i.size, 0);
+    const isCopy = active.operation === 'copy';
 
     const jobId = `job-${Date.now()}`;
-    const newJob: FileOperationJob = {
+    const job: FileOperationJob = {
       id: jobId,
-      type: active.operation === 'copy' ? 'copy' : 'move',
-      title: `${active.operation === 'copy' ? 'Copying' : 'Moving'} ${active.items.length} item(s)`,
+      type: isCopy ? 'copy' : 'move',
+      title: `${isCopy ? 'Copying' : 'Moving'} ${active.items.length} item${active.items.length === 1 ? '' : 's'}`,
       sourcePaths: srcPaths,
       destinationPath: dest,
-      progress: 5,
+      progress: 0,
       totalBytes,
-      processedBytes: Math.floor(totalBytes * 0.05),
-      speed: '142 MB/s',
+      processedBytes: 0,
+      speed: '',
       status: 'running',
       startedAt: new Date().toISOString(),
     };
+    set((state) => ({ operationJobs: [job, ...state.operationJobs] }));
 
+    const startedAt = performance.now();
+    try {
+      if (isCopy) {
+        await fileSystemService.copyItems(srcPaths, dest);
+      } else {
+        await fileSystemService.moveItems(srcPaths, dest);
+      }
+    } catch (error) {
+      set((state) => ({
+        operationJobs: state.operationJobs.map((item) =>
+          item.id === jobId
+            ? {
+                ...item,
+                status: 'error' as const,
+                errorMessage: error instanceof Error ? error.message : String(error),
+              }
+            : item,
+        ),
+      }));
+      // Even on failure the folder may have changed (a partial copy leaves
+      // files behind), so the listing is refreshed before returning.
+      await get().loadCurrentDirectory();
+      return;
+    }
+
+    // The command resolves only after the filesystem work is done, so this is
+    // the real completion point. There is no per-byte progress channel yet, so
+    // the bar stays at 0 until then rather than inventing numbers.
+    const elapsed = Math.max(1, performance.now() - startedAt);
     set((state) => ({
-      operationJobs: [newJob, ...state.operationJobs],
-      isOperationQueueOpen: true,
+      operationJobs: state.operationJobs.map((item) =>
+        item.id === jobId
+          ? {
+              ...item,
+              progress: 100,
+              processedBytes: totalBytes,
+              speed: `${formatRate(totalBytes, elapsed)}`,
+              status: 'completed' as const,
+            }
+          : item,
+      ),
+      // A cut is consumed by a successful paste; a copy stays available.
+      clipboard: isCopy ? state.clipboard : null,
     }));
 
-    // Simulate transfer progress for authentic desktop feel
-    const interval = setInterval(() => {
-      set((state) => {
-        const jobs = state.operationJobs.map((j) => {
-          if (j.id !== jobId) return j;
-          const nextProg = Math.min(100, j.progress + 25);
-          return {
-            ...j,
-            progress: nextProg,
-            processedBytes: Math.floor(totalBytes * (nextProg / 100)),
-            status: nextProg >= 100 ? ('completed' as const) : ('running' as const),
-          };
-        });
-        return { operationJobs: jobs };
-      });
-    }, 200);
-
-    setTimeout(async () => {
-      clearInterval(interval);
-      try {
-        if (active.operation === 'copy') {
-          await fileSystemService.copyItems(srcPaths, dest);
-        } else {
-          await fileSystemService.moveItems(srcPaths, dest);
-          set({ clipboard: null });
-        }
-      } catch (error) {
-        // The job used to sit at 100% even when the transfer failed, which is
-        // the worst possible report. Mark it failed and keep the reason.
-        set((state) => ({
-          operationJobs: state.operationJobs.map((job) =>
-            job.id === jobId
-              ? {
-                  ...job,
-                  status: 'error' as const,
-                  errorMessage: error instanceof Error ? error.message : String(error),
-                }
-              : job,
-          ),
-        }));
-        return;
-      }
-      get().loadCurrentDirectory();
-    }, 900);
+    // Refresh the folder that is actually on screen. This is why a paste used to
+    // look like it did nothing until the user navigated away and back.
+    await get().loadCurrentDirectory();
   },
 
   cancelOperation: (jobId: string) => {
