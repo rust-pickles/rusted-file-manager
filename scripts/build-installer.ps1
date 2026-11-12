@@ -27,8 +27,10 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-# Every native command must fail the script, not silently continue.
-$PSNativeCommandUseErrorActionPreference = $true
+# Deliberately no $PSNativeCommandUseErrorActionPreference here: it is PS7-only,
+# and when it fires it aborts on the native command itself with no message, so
+# the readable throw below never runs and the user sees a CategoryInfo dump
+# instead of the reason. Every native call is checked for exit code instead.
 
 $repoRoot = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 Set-Location $repoRoot
@@ -41,6 +43,62 @@ function Write-Step([string]$Message) {
 function Assert-Command([string]$Name, [string]$Hint) {
     if (-not (Get-Command $Name -ErrorAction SilentlyContinue)) {
         throw "'$Name' was not found. $Hint"
+    }
+}
+
+# Locates the MSVC linker that the Rust msvc target needs. Rust calls link.exe
+# through an environment that rustup normally sets up, but a toolchain installed
+# by rustup-init does not come with the linker at all: it belongs to Visual
+# Studio Build Tools. Without this check the build dies halfway through
+# compiling dependencies with a bare "linker `link.exe` not found".
+function Find-MsvcLinker {
+    # Already on PATH (a Developer Command Prompt, or a previous run in this shell).
+    $onPath = Get-Command 'link.exe' -ErrorAction SilentlyContinue
+    if ($onPath) { return $onPath.Source }
+
+    # vswhere ships with every VS 2017+ installer, including Build Tools.
+    $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
+    if (-not (Test-Path $vswhere)) { return $null }
+
+    $vsPath = & $vswhere -latest -products * `
+        -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 `
+        -property installationPath 2>$null
+    if (-not $vsPath) { return $null }
+
+    # The linker lives under VC\Tools\MSVC\<version>\bin\Host<x64>\<arch>.
+    $found = Get-ChildItem -Path (Join-Path $vsPath 'VC\Tools\MSVC') -Recurse -Filter 'link.exe' -ErrorAction SilentlyContinue |
+        Where-Object { $_.FullName -match '\\Hostx64\\x64\\' } |
+        Sort-Object FullName -Descending |
+        Select-Object -First 1
+    if ($found) { return $found.FullName }
+    return $null
+}
+
+function Install-MsvcBuildTools {
+    Write-Step "Installing the C++ build tools (needed by the Rust linker)"
+    $bootstrapper = Join-Path $env:TEMP 'vs_BuildTools.exe'
+    Invoke-WebRequest -Uri 'https://aka.ms/vs/17/release/vs_BuildTools.exe' `
+        -OutFile $bootstrapper -UseBasicParsing
+
+    # VCTools is the MSVC compiler and linker. Windows11SDK is required for the
+    # Windows headers and import libraries; both are needed to link a Tauri app.
+    $arguments = @(
+        '--quiet', '--wait', '--norestart', '--nocache',
+        '--installPath', (Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\2022\BuildTools'),
+        '--add', 'Microsoft.VisualStudio.Component.VC.Tools.x86.x64',
+        '--add', 'Microsoft.VisualStudio.Component.Windows11SDK.22621'
+    )
+    Write-Host "This downloads roughly 2-4 GB and takes several minutes. Windows will ask for permission once."
+    # Build Tools installs under Program Files, so it needs elevation. Asking for
+    # it here is better than failing with a cryptic exit code.
+    $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole(
+        [Security.Principal.WindowsBuiltInRole]::Administrator)
+    $elevate = @{}
+    if (-not $isAdmin) { $elevate['Verb'] = 'RunAs' }
+    $process = Start-Process -FilePath $bootstrapper -ArgumentList $arguments -Wait -PassThru @elevate
+    # 0 = installed, 3010 = installed but a reboot is pending. Both are fine.
+    if ($process.ExitCode -ne 0 -and $process.ExitCode -ne 3010) {
+        throw "The C++ build tools installer failed (exit $($process.ExitCode)). Install 'Desktop development with C++' from https://visualstudio.microsoft.com/visual-cpp-build-tools/ by hand, then re-run this script."
     }
 }
 
@@ -66,6 +124,20 @@ if (-not (Get-Command 'cargo' -ErrorAction SilentlyContinue)) {
 }
 Write-Host "cargo $(cargo --version)"
 
+# rustup installs the compiler but never the linker. Catch it here, where the
+# message makes sense, instead of ten minutes into compiling dependencies.
+if (-not (Find-MsvcLinker)) {
+    Install-MsvcBuildTools
+    if (-not (Find-MsvcLinker)) {
+        throw "The C++ build tools finished installing but link.exe still cannot be found. Reboot, then re-run this script. If it still fails, install 'Desktop development with C++' from https://visualstudio.microsoft.com/visual-cpp-build-tools/."
+    }
+}
+$linker = Find-MsvcLinker
+# rustc finds the MSVC libraries itself, but putting the linker on PATH also
+# covers build scripts that shell out to link.exe directly.
+$env:Path = "$(Split-Path -Parent $linker);$env:Path"
+Write-Host "C++ linker: $linker"
+
 Write-Step "Installing frontend dependencies"
 npm install
 if ($LASTEXITCODE -ne 0) { throw "npm install failed with exit code $LASTEXITCODE" }
@@ -75,7 +147,9 @@ if ($Portable -or $NoBundle) {
     # tauri build runs `npm run build` first (beforeBuildCommand), so the
     # webview assets are always current.
     npx tauri build --no-bundle
-    if ($LASTEXITCODE -ne 0) { throw "tauri build failed with exit code $LASTEXITCODE" }
+    if ($LASTEXITCODE -ne 0) {
+    throw "tauri build failed with exit code $LASTEXITCODE. Scroll up to the first line starting with 'error:' - that is the real cause; the last line is only the exit."
+}
     $exe = Join-Path $repoRoot 'target\release\rusted-shell.exe'
     if (-not (Test-Path $exe)) { throw "build finished but $exe is missing" }
     Write-Host ""
@@ -86,7 +160,9 @@ if ($Portable -or $NoBundle) {
 Write-Step "Building the installer"
 # NSIS is the Windows target configured in src-tauri/tauri.conf.json.
 npx tauri build --bundles nsis
-if ($LASTEXITCODE -ne 0) { throw "tauri build failed with exit code $LASTEXITCODE" }
+if ($LASTEXITCODE -ne 0) {
+    throw "tauri build failed with exit code $LASTEXITCODE. Scroll up to the first line starting with 'error:' - that is the real cause; the last line is only the exit."
+}
 
 $version = (Get-Content (Join-Path $repoRoot 'src-tauri\tauri.conf.json') -Raw | ConvertFrom-Json).version
 $setup = Get-ChildItem -Path (Join-Path $repoRoot 'target\release\bundle\nsis') -Filter '*setup.exe' -ErrorAction SilentlyContinue |
