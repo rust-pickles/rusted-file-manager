@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// A mountable volume as reported by the platform.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
